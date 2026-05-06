@@ -75,7 +75,11 @@ button {
 <script>
 
 function getIssueKey() {
-  const parts = window.location.pathname.split("/");
+  const ref = document.referrer;
+
+  // Example referrer:
+  // https://cnv-intel-test-migration.atlassian.net/browse/PLC-123
+  const parts = ref.split("/");
   return parts[parts.length - 1];
 }
 
