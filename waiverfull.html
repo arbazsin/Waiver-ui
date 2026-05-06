@@ -7,7 +7,7 @@
 <style>
 body {
   font-family: Arial, sans-serif;
-  padding: 10px;
+  padding: 12px;
 }
 
 h2 {
@@ -30,8 +30,8 @@ textarea {
 button {
   margin-top: 15px;
   padding: 8px 14px;
-  border-radius: 4px;
   border: none;
+  border-radius: 4px;
   cursor: pointer;
 }
 
@@ -74,13 +74,10 @@ button {
 
 <script>
 
+// ✅ GET ISSUE KEY FROM URL PARAM
 function getIssueKey() {
-  const ref = document.referrer;
-
-  // Example referrer:
-  // https://cnv-intel-test-migration.atlassian.net/browse/PLC-123
-  const parts = ref.split("/");
-  return parts[parts.length - 1];
+  const params = new URLSearchParams(window.location.search);
+  return params.get("issueKey");
 }
 
 function resetForm() {
@@ -90,9 +87,15 @@ function resetForm() {
   document.getElementById("comment").value = "";
 }
 
+// ✅ MAIN SUBMIT FUNCTION
 async function submitForm() {
 
   const issueKey = getIssueKey();
+
+  if (!issueKey) {
+    alert("❌ Issue key not found");
+    return;
+  }
 
   const waive = document.getElementById("waive").checked;
   const response = document.getElementById("response").value;
@@ -103,15 +106,18 @@ async function submitForm() {
   const file = fileInput.files[0];
 
   try {
+
     // ✅ UPDATE FIELDS
     await fetch(`/rest/api/3/issue/${issueKey}`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json"
+      },
       body: JSON.stringify({
         fields: {
           customfield_10615: justification,
           customfield_10382: response,
-          customfield_10619: waive ? { value: "Yes" } : { value: "No" }
+          customfield_10619: waive ? "Yes" : "No"
         }
       })
     });
@@ -119,7 +125,9 @@ async function submitForm() {
     // ✅ ADD COMMENT
     await fetch(`/rest/api/3/issue/${issueKey}/comment`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json"
+      },
       body: JSON.stringify({
         body: `Waiver Request:
 
@@ -127,11 +135,12 @@ Waive: ${waive ? "Yes" : "No"}
 Justification: ${justification}
 Response: ${response}
 
-Comment: ${comment}`
+Comment:
+${comment}`
       })
     });
 
-    // ✅ ATTACHMENT (if file exists)
+    // ✅ ATTACHMENT
     if (file) {
       const formData = new FormData();
       formData.append("file", file);
@@ -145,11 +154,11 @@ Comment: ${comment}`
       });
     }
 
-    alert("✅ Waiver request submitted!");
+    alert("✅ Waiver submitted successfully");
 
-  } catch (err) {
-    console.error(err);
-    alert("❌ Something failed. Check console.");
+  } catch (e) {
+    console.error(e);
+    alert("❌ Error submitting waiver");
   }
 }
 
