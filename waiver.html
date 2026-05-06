@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Waiver Request</title>
+
+<style>
+body { font-family: Arial; padding:10px; }
+
+h2 { margin-bottom:10px; }
+
+label { display:block; margin-top:10px; font-weight:bold; }
+
+textarea { width:100%; min-height:80px; margin-top:5px; }
+
+button {
+  margin-top:10px;
+  padding:6px 12px;
+  background:#0052CC;
+  color:white;
+  border:none;
+  border-radius:4px;
+  cursor:pointer;
+}
+</style>
+
+</head>
+
+<body>
+
+<h2>Waiver Request</h2>
+
+<label>
+<input type="checkbox" id="waive"> Waiver Request
+</label>
+
+<label>Response Details</label>
+<textarea id="response"></textarea>
+
+<label>Justification</label>
+<textarea id="justification"></textarea>
+
+<label>Attachment</label>
+<input type="file" id="attachment">
+
+<label>Comment</label>
+<textarea id="comment"></textarea>
+
+<button onclick="submitForm()">Submit</button>
+
+<script>
+
+function submitForm() {
+  alert("✅ UI Working (Next step → connect API)");
+}
+
+</script>
+
+</body>
+</html>
