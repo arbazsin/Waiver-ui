@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Waiver Request</title>
+
+<style>
+body {
+  font-family: Arial, sans-serif;
+  padding: 10px;
+  background: white;
+}
+
+h2 {
+  margin-bottom: 10px;
+}
+
+label {
+  display: block;
+  margin-top: 12px;
+  font-weight: 600;
+}
+
+textarea {
+  width: 100%;
+  min-height: 80px;
+  margin-top: 5px;
+  padding: 6px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+input[type="file"] {
+  margin-top: 5px;
+}
+
+button {
+  margin-top: 15px;
+  margin-right: 10px;
+  padding: 8px 14px;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+}
+
+.primary {
+  background-color: #0052CC;
+  color: white;
+}
+
+.secondary {
+  background-color: #f4f5f7;
+}
+</style>
+
+</head>
+
+<body>
+
+<h2>Waiver Request</h2>
+
+<label>
+  <input type="checkbox" id="waive"> Waiver Request
+</label>
+
+<label>Response Details</label>
+<textarea id="response"></textarea>
+
+<label>Justification</label>
+<textarea id="justification"></textarea>
+
+<label>Attachment</label>
+<input type="file" id="attachment">
+
+<label>Comment</label>
+<textarea id="comment" style="min-height:120px;"></textarea>
+
+<div>
+  <button class="primary" onclick="submitForm()">Waiver Request</button>
+  <button class="secondary" onclick="resetForm()">Cancel</button>
+</div>
+
+<script>
+
+function resetForm() {
+  document.getElementById("waive").checked = false;
+  document.getElementById("response").value = "";
+  document.getElementById("justification").value = "";
+  document.getElementById("comment").value = "";
+}
+
+function submitForm() {
+  const waive = document.getElementById("waive").checked;
+  const response = document.getElementById("response").value;
+  const justification = document.getElementById("justification").value;
+  const comment = document.getElementById("comment").value;
+
+  console.log({
+    waive,
+    response,
+    justification,
+    comment
+  });
+
+  alert("✅ Waiver UI working! (Next step → connect Jira API)");
+}
+
+</script>
+
+</body>
+</html>
