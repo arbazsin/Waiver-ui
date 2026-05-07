@@ -41,36 +41,21 @@ function getIssueKey() {
 }
 
 // ✅ OPEN WORKFLOW SCREEN
-async function openTransition() {
+function openTransition() {
 
   const issueKey = getIssueKey();
+  const baseUrl = getBaseUrl();
 
-  if (!issueKey) {
-    alert("Issue key missing");
+  if (!issueKey || !baseUrl) {
+    alert("Missing data");
     return;
   }
 
-  try {
-    // ✅ Step 1: get ISSUE ID
-    const res = await fetch(`/rest/api/3/issue/${issueKey}`);
-    const data = await res.json();
+  const transitionId = "2";
 
-    const issueId = data.id;
-
-    const transitionId = "2";
-
-    const baseUrl = window.location.origin;
-
-    // ✅ Step 2: open transition popup (REAL one)
-    window.top.location.href =
-      `${baseUrl}/secure/WorkflowUIDispatcher.jspa?id=${issueId}&action=${transitionId}`;
-
-  } catch (e) {
-    console.error(e);
-    alert("Failed to open transition");
-  }
+  window.top.location.href =
+    `${baseUrl}/browse/${issueKey}?modal=transition&transitionId=${transitionId}`;
 }
-
 
 </script>
 
