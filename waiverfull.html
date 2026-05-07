@@ -2,8 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Transition</title>
-  <script src="https://connect-cdn.atl-paas.net/all.js"></script>
+  <title>Waiver Request</title>
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -32,80 +31,53 @@
 </head>
 <body>
 
-  <button class="btn" id="openTransition">Open Transition</button>
+  <button class="btn" id="openTransition">Waiver Request</button>
   <div id="debug"></div>
 
   <script>
     var TRANSITION_ID = 2;
-    var issueKey = null;
-    var issueId = null;
 
     function log(msg) {
       var el = document.getElementById('debug');
       el.textContent += msg + '\n';
-      console.log(msg);
     }
 
-    // ── Method 1: Try getting from URL params (ScriptRunner injects these) ──
-    var params = new URLSearchParams(window.location.search);
-    issueKey = params.get('issueKey');
-    issueId = params.get('issueId');
-    log('URL params → issueKey: ' + issueKey + ', issueId: ' + issueId);
+    // Get issueKey and baseUrl from referrer
+    var referrer = document.referrer || '';
+    var issueKey = null;
+    var baseUrl = null;
 
-    // ── Method 2: Try AP.context as fallback ──
-    try {
-      AP.context.getContext(function (ctx) {
-        log('AP context received: ' + JSON.stringify(ctx));
-        if (ctx && ctx.jira && ctx.jira.issue) {
-          if (!issueKey) issueKey = ctx.jira.issue.key;
-          if (!issueId) issueId = ctx.jira.issue.id;
-          log('From AP → issueKey: ' + issueKey + ', issueId: ' + issueId);
-        }
-      });
-    } catch (e) {
-      log('AP.context failed: ' + e.message);
+    if (referrer) {
+      var m = referrer.match(/\/browse\/([A-Z][A-Z0-9_]+-\d+)/) ||
+              referrer.match(/selectedIssue=([A-Z][A-Z0-9_]+-\d+)/) ||
+              referrer.match(/\/issue\/([A-Z][A-Z0-9_]+-\d+)/);
+      if (m) issueKey = m[1];
+
+      var b = referrer.match(/^(https?:\/\/[^\/]+)/);
+      if (b) baseUrl = b[1];
     }
 
-    // ── Button click handler ──
+    log('issueKey: ' + issueKey);
+    log('baseUrl: ' + baseUrl);
+
     document.getElementById('openTransition').addEventListener('click', function () {
-      log('Button clicked. issueKey=' + issueKey + ' issueId=' + issueId);
-
-      if (!issueId && !issueKey) {
-        log('ERROR: No issue context available. Make sure your ScriptRunner URL has ?issueKey=${issue.key}&issueId=${issue.id}');
-        alert('No issue context found. Update your ScriptRunner fragment URL to include ?issueKey=${issue.key}&issueId=${issue.id}');
+      if (!issueKey || !baseUrl) {
+        alert('Could not detect issue. Make sure you are on an issue page.');
         return;
       }
 
-      // ── Try opening the native transition screen ──
+      var url = baseUrl
+        + '/secure/WorkflowUIDispatcher.jspa'
+        + '?key=' + issueKey
+        + '&action=' + TRANSITION_ID
+        + '&inline=true'
+        + '&decorator=dialog'
+        + '&_=' + Date.now();
 
-      // Attempt 1: AP.navigator
-      try {
-        log('Trying AP.navigator.go...');
-        AP.navigator.go('site', {
-          absoluteUrl: '/secure/WorkflowUIDispatcher.jspa?id=' + issueId + '&action=' + TRANSITION_ID
-        });
-        log('AP.navigator.go called.');
-        return;
-      } catch (e) {
-        log('AP.navigator.go failed: ' + e.message);
-      }
+      log('Opening: ' + url);
 
-      // Attempt 2: window.open
-      try {
-        log('Trying window.open...');
-        window.open('/secure/WorkflowUIDispatcher.jspa?id=' + issueId + '&action=' + TRANSITION_ID, '_top');
-        return;
-      } catch (e) {
-        log('window.open failed: ' + e.message);
-      }
-
-      // Attempt 3: parent location
-      try {
-        log('Trying top.location...');
-        window.top.location.href = '/secure/WorkflowUIDispatcher.jspa?id=' + issueId + '&action=' + TRANSITION_ID;
-      } catch (e) {
-        log('top.location failed: ' + e.message);
-      }
+      // Open in parent window
+      window.top.location.href = url;
     });
   </script>
 
