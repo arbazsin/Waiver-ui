@@ -51,6 +51,12 @@ button {
 
 <h2>Waiver Request</h2>
 
+<!-- ✅ BUTTON ADDED -->
+<button class="primary" onclick="openForm()">Open Waiver Request</button>
+
+<!-- ✅ WRAPPED YOUR ORIGINAL FORM -->
+<div id="waiverForm" style="display:none;">
+
 <label>
   <input type="checkbox" id="waive"> Waiver Request
 </label>
@@ -72,19 +78,29 @@ button {
   <button class="secondary" onclick="resetForm()">Cancel</button>
 </div>
 
+</div>
+
 <script>
+
+// ✅ SHOW FORM
+function openForm() {
+  document.getElementById("waiverForm").style.display = "block";
+}
+
+// ✅ HIDE + RESET FORM
+function resetForm() {
+  document.getElementById("waiverForm").style.display = "none";
+
+  document.getElementById("waive").checked = false;
+  document.getElementById("response").value = "";
+  document.getElementById("justification").value = "";
+  document.getElementById("comment").value = "";
+}
 
 // ✅ GET ISSUE KEY FROM URL PARAM
 function getIssueKey() {
   const params = new URLSearchParams(window.location.search);
   return params.get("issueKey");
-}
-
-function resetForm() {
-  document.getElementById("waive").checked = false;
-  document.getElementById("response").value = "";
-  document.getElementById("justification").value = "";
-  document.getElementById("comment").value = "";
 }
 
 // ✅ MAIN SUBMIT FUNCTION
@@ -107,7 +123,6 @@ async function submitForm() {
 
   try {
 
-    // ✅ UPDATE FIELDS
     await fetch(`/rest/api/3/issue/${issueKey}`, {
       method: "PUT",
       headers: {
@@ -122,7 +137,6 @@ async function submitForm() {
       })
     });
 
-    // ✅ ADD COMMENT
     await fetch(`/rest/api/3/issue/${issueKey}/comment`, {
       method: "POST",
       headers: {
@@ -140,7 +154,6 @@ ${comment}`
       })
     });
 
-    // ✅ ATTACHMENT
     if (file) {
       const formData = new FormData();
       formData.append("file", file);
