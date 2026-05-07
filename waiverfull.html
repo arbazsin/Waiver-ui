@@ -41,7 +41,7 @@ function getIssueKey() {
 }
 
 // ✅ OPEN WORKFLOW SCREEN
-function openTransition() {
+async function openTransition() {
 
   const issueKey = getIssueKey();
 
@@ -50,15 +50,27 @@ function openTransition() {
     return;
   }
 
- const transitionId = "2"; // 🔥 REPLACE THIS WITH YOUR ACTUAL TRANSITION ID
+  try {
+    // ✅ Step 1: get ISSUE ID
+    const res = await fetch(`/rest/api/3/issue/${issueKey}`);
+    const data = await res.json();
 
-  // ✅ THIS OPENS JIRA POPUP (REAL SCREEN)
- const baseUrl = window.location.origin;
+    const issueId = data.id;
 
- window.top.location.href = 
-  `${baseUrl}/browse/${issueKey}?modal=transition&transitionId=${transitionId}`;
+    const transitionId = "2";
 
+    const baseUrl = window.location.origin;
+
+    // ✅ Step 2: open transition popup (REAL one)
+    window.top.location.href =
+      `${baseUrl}/secure/WorkflowUIDispatcher.jspa?id=${issueId}&action=${transitionId}`;
+
+  } catch (e) {
+    console.error(e);
+    alert("Failed to open transition");
+  }
 }
+
 
 </script>
 
