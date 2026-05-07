@@ -7,136 +7,41 @@
 <style>
 body {
   font-family: Arial, sans-serif;
-  padding: 12px;
-}
-
-/* ✅ BUTTON */
-.primary {
-  background-color: #0052CC;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  padding: 8px 14px;
-}
-
-/* ✅ MODAL BACKGROUND */
-.modal {
-  display: none;
-  position: fixed;
-  z-index: 999;
-  left: 0;
-  top: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0,0,0,0.4);
-}
-
-/* ✅ MODAL BOX */
-.modal-content {
-  background: white;
-  margin: 8% auto;
-  padding: 20px;
-  width: 90%;
-  max-width: 450px;
-  border-radius: 6px;
-}
-
-/* ✅ HEADER */
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.close {
-  font-size: 18px;
-  cursor: pointer;
-}
-
-/* ✅ FORM */
-label {
-  display: block;
-  margin-top: 12px;
-  font-weight: 600;
-}
-
-textarea {
-  width: 100%;
-  min-height: 80px;
-  margin-top: 5px;
-  padding: 6px;
-}
-
-input[type="file"] {
-  margin-top: 5px;
+  padding: 10px;
 }
 
 button {
-  margin-top: 10px;
+  padding: 8px 14px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.primary {
+  background-color: #0052CC;
+  color: white;
 }
 </style>
+
 </head>
 
 <body>
 
-<!-- ✅ ONLY BUTTON -->
-<button class="primary" onclick="openForm()">Waiver Request</button>
-
-<!-- ✅ MODAL -->
-<div id="modal" class="modal">
-
-  <div class="modal-content">
-
-    <div class="modal-header">
-      <h2>Waiver Request</h2>
-      <span class="close" onclick="closeForm()">✖</span>
-    </div>
-
-    <label>
-      <input type="checkbox" id="waive"> Waiver Request
-    </label>
-
-    <label>Response Details</label>
-    <textarea id="response"></textarea>
-
-    <label>Justification</label>
-    <textarea id="justification"></textarea>
-
-    <label>Attachment</label>
-    <input type="file" id="attachment">
-
-    <label>Comment</label>
-    <textarea id="comment" style="min-height:120px;"></textarea>
-
-    <div>
-      <button class="primary" onclick="submitForm()">Submit</button>
-      <button onclick="closeForm()">Cancel</button>
-    </div>
-
-  </div>
-</div>
+<!-- ✅ BUTTON ONLY -->
+<button class="primary" onclick="openTransition()">
+  Waiver Request
+</button>
 
 <script>
 
-// ✅ OPEN DIALOG
-function openForm() {
-  document.getElementById("modal").style.display = "block";
-}
-
-// ✅ CLOSE DIALOG
-function closeForm() {
-  document.getElementById("modal").style.display = "none";
-}
-
-// ✅ ISSUE KEY FROM URL PARAM
+// ✅ GET ISSUE KEY FROM URL PARAM
 function getIssueKey() {
   const params = new URLSearchParams(window.location.search);
   return params.get("issueKey");
 }
 
-// ✅ SUBMIT FUNCTION
-async function submitForm() {
+// ✅ OPEN WORKFLOW SCREEN
+function openTransition() {
 
   const issueKey = getIssueKey();
 
@@ -145,40 +50,10 @@ async function submitForm() {
     return;
   }
 
-  const waive = document.getElementById("waive").checked;
-  const response = document.getElementById("response").value;
-  const justification = document.getElementById("justification").value;
-  const comment = document.getElementById("comment").value;
+  const transitionId = "31"; // 🔥 REPLACE THIS WITH YOUR ACTUAL TRANSITION ID
 
-  try {
-
-    await fetch(`/rest/api/3/issue/${issueKey}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fields: {
-          customfield_10615: justification,
-          customfield_10382: response,
-          customfield_10619: waive ? "Yes" : "No"
-        }
-      })
-    });
-
-    await fetch(`/rest/api/3/issue/${issueKey}/comment`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        body: comment
-      })
-    });
-
-    alert("Submitted ✅");
-    closeForm();
-
-  } catch (e) {
-    console.error(e);
-    alert("Error ❌");
-  }
+  // ✅ THIS OPENS JIRA POPUP (REAL SCREEN)
+  window.location.href = `/browse/${issueKey}?modal=transition&transitionId=${transitionId}`;
 }
 
 </script>
