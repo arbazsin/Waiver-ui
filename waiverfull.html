@@ -10,9 +10,7 @@
       padding: 16px;
       margin: 0;
     }
-
     .btn {
-      display: inline-block;
       padding: 10px 20px;
       font-size: 14px;
       font-weight: 600;
@@ -22,26 +20,92 @@
       border-radius: 4px;
       cursor: pointer;
     }
-
-    .btn:hover {
-      background: #0065FF;
+    .btn:hover { background: #0065FF; }
+    #debug {
+      margin-top: 12px;
+      font-size: 11px;
+      color: #666;
+      white-space: pre-wrap;
+      word-break: break-all;
     }
   </style>
 </head>
 <body>
 
   <button class="btn" id="openTransition">Open Transition</button>
+  <div id="debug"></div>
 
   <script>
     var TRANSITION_ID = 2;
+    var issueKey = null;
+    var issueId = null;
 
+    function log(msg) {
+      var el = document.getElementById('debug');
+      el.textContent += msg + '\n';
+      console.log(msg);
+    }
+
+    // ── Method 1: Try getting from URL params (ScriptRunner injects these) ──
+    var params = new URLSearchParams(window.location.search);
+    issueKey = params.get('issueKey');
+    issueId = params.get('issueId');
+    log('URL params → issueKey: ' + issueKey + ', issueId: ' + issueId);
+
+    // ── Method 2: Try AP.context as fallback ──
+    try {
+      AP.context.getContext(function (ctx) {
+        log('AP context received: ' + JSON.stringify(ctx));
+        if (ctx && ctx.jira && ctx.jira.issue) {
+          if (!issueKey) issueKey = ctx.jira.issue.key;
+          if (!issueId) issueId = ctx.jira.issue.id;
+          log('From AP → issueKey: ' + issueKey + ', issueId: ' + issueId);
+        }
+      });
+    } catch (e) {
+      log('AP.context failed: ' + e.message);
+    }
+
+    // ── Button click handler ──
     document.getElementById('openTransition').addEventListener('click', function () {
-      AP.context.getContext(function (context) {
-        var issueId = context.jira.issue.id;
+      log('Button clicked. issueKey=' + issueKey + ' issueId=' + issueId);
+
+      if (!issueId && !issueKey) {
+        log('ERROR: No issue context available. Make sure your ScriptRunner URL has ?issueKey=${issue.key}&issueId=${issue.id}');
+        alert('No issue context found. Update your ScriptRunner fragment URL to include ?issueKey=${issue.key}&issueId=${issue.id}');
+        return;
+      }
+
+      // ── Try opening the native transition screen ──
+
+      // Attempt 1: AP.navigator
+      try {
+        log('Trying AP.navigator.go...');
         AP.navigator.go('site', {
           absoluteUrl: '/secure/WorkflowUIDispatcher.jspa?id=' + issueId + '&action=' + TRANSITION_ID
         });
-      });
+        log('AP.navigator.go called.');
+        return;
+      } catch (e) {
+        log('AP.navigator.go failed: ' + e.message);
+      }
+
+      // Attempt 2: window.open
+      try {
+        log('Trying window.open...');
+        window.open('/secure/WorkflowUIDispatcher.jspa?id=' + issueId + '&action=' + TRANSITION_ID, '_top');
+        return;
+      } catch (e) {
+        log('window.open failed: ' + e.message);
+      }
+
+      // Attempt 3: parent location
+      try {
+        log('Trying top.location...');
+        window.top.location.href = '/secure/WorkflowUIDispatcher.jspa?id=' + issueId + '&action=' + TRANSITION_ID;
+      } catch (e) {
+        log('top.location failed: ' + e.message);
+      }
     });
   </script>
 
