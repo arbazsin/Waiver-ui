@@ -25,16 +25,6 @@
       font-weight: 600;
       text-transform: uppercase;
     }
-
-    .status-badge {
-      background-color: #DEEBFF;
-      color: #0747A6;
-      padding: 2px 8px;
-      border-radius: 3px;
-      font-size: 12px;
-      font-weight: 700;
-    }
-
     .waiver-btn {
       display: inline-flex;
       align-items: center;
@@ -101,7 +91,7 @@
         container.innerHTML =
           '<div class="status-row">' +
           '  <span class="status-label">Status:</span>' +
-          '  <span class="status-badge">' + issueId + '</span>' +
+          '  <span>' + issueId + '</span>' +
           '</div>' +
           '<a href="' + url + '" class="waiver-btn">Waiver Request</a>';
 
