@@ -59,8 +59,6 @@
 </head>
 <body>
   <div id="container"><span class="loading">Loading...</span></div>
-
-  <!-- Debug panel visible directly on the page (remove after testing) -->
   <div id="debug" class="debug-panel"></div>
 
   <script>
@@ -72,8 +70,7 @@
     var WAIVER_ACTION_ID   = 2;
 
     // ============================================================
-    // Debug logger — writes to BOTH console AND the on-page panel
-    // so you can see output even without switching iframe context
+    // Debug logger
     // ============================================================
     var debugEl = document.getElementById('debug');
     function log(label, data) {
@@ -86,141 +83,108 @@
     }
 
     // ============================================================
-    // Step 1: Check what's available immediately on page load
-    // ============================================================
-    log('Page loaded');
-    log('window.AdaptavistBridge exists', !!window.AdaptavistBridge);
-    log('window.AdaptavistBridgeContext exists', !!window.AdaptavistBridgeContext);
-
-    if (window.AdaptavistBridgeContext) {
-      log('Context object', window.AdaptavistBridgeContext.context);
-    }
-
-    // ============================================================
-    // Step 2: Wait for bridge context to be ready
+    // Wait for bridge
     // ============================================================
     function waitForBridge(callback) {
       var attempts = 0;
       var maxAttempts = 50;
-
-      log('Starting bridge polling (max ' + maxAttempts + ' attempts, 200ms each)');
-
       var interval = setInterval(function () {
         attempts++;
-
-        var hasBridge  = !!window.AdaptavistBridge;
-        var hasContext = !!window.AdaptavistBridgeContext;
-        var issueKey   = null;
-
-        if (hasContext && window.AdaptavistBridgeContext.context) {
+        var issueKey = null;
+        if (window.AdaptavistBridgeContext && window.AdaptavistBridgeContext.context) {
           issueKey = window.AdaptavistBridgeContext.context.issueKey;
         }
-
-        // Log every 5th attempt to avoid spam, plus first and last
         if (attempts === 1 || attempts % 5 === 0 || issueKey) {
-          log('Poll #' + attempts, {
-            bridge: hasBridge,
-            context: hasContext,
-            issueKey: issueKey || 'N/A',
-            fullContext: hasContext ? window.AdaptavistBridgeContext.context : 'N/A'
-          });
+          log('Poll #' + attempts, { issueKey: issueKey || 'N/A' });
         }
-
         if (issueKey) {
           clearInterval(interval);
-          log('Bridge ready after ' + attempts + ' attempts');
           callback(issueKey);
         } else if (attempts >= maxAttempts) {
           clearInterval(interval);
-          log('FAILED — Bridge context never became available');
-          log('Final state', {
-            bridge: hasBridge,
-            context: hasContext,
-            contextObj: hasContext ? window.AdaptavistBridgeContext : 'undefined'
-          });
+          log('FAILED — Bridge never ready');
           document.getElementById('container').innerHTML =
-            '<span class="loading">Unable to load issue context after 10s.</span>';
+            '<span class="loading">Unable to load issue context.</span>';
         }
       }, 200);
     }
 
     // ============================================================
-    // Step 3: Fetch issue data and render
+    // Main
     // ============================================================
     waitForBridge(function (issueKey) {
       var container = document.getElementById('container');
-      var apiUrl = '/rest/api/2/issue/' + issueKey + '?fields=project,issuetype,status';
 
-      log('Calling REST API', apiUrl);
+      log('Bridge ready', issueKey);
 
+      // Step 1: Fetch issue data
       AdaptavistBridge.request({
-        url: apiUrl,
+        url: '/rest/api/2/issue/' + issueKey + '?fields=project,issuetype,status',
         type: 'GET'
       }).then(function (response) {
-        log('Raw API response type', typeof response);
-        log('Raw API response', response);
+        var issue = typeof response === 'string' ? JSON.parse(response) : response;
 
-        var issue;
-        try {
-          issue = typeof response === 'string' ? JSON.parse(response) : response;
-        } catch (e) {
-          log('JSON parse FAILED', e.message);
-          container.innerHTML = '<span class="loading">Failed to parse API response.</span>';
-          return;
-        }
+        var projectKey  = issue.fields.project.key;
+        var issueType   = issue.fields.issuetype.name;
+        var statusName  = issue.fields.status.name;
+        var fullIssueKey = issue.key;       // "PLC-18723"
+        var issueId     = issue.id;         // numeric
 
-        var projectKey = issue.fields.project.key;
-        var issueType  = issue.fields.issuetype.name;
-        var statusName = issue.fields.status.name;
-        var issueId    = issue.id;
+        // Extract Jira base URL from the self link
+        // issue.self = "https://your-instance.atlassian.net/rest/api/2/issue/278481"
+        var baseUrl = issue.self.split('/rest/')[0];
 
-        log('Parsed issue data', {
+        log('Parsed', {
+          fullIssueKey: fullIssueKey,
+          issueId: issueId,
           projectKey: projectKey,
           issueType: issueType,
           status: statusName,
-          issueId: issueId,
-          issueKey: issueKey
+          baseUrl: baseUrl
         });
 
         // Condition check
-        var projectMatch = (projectKey === ALLOWED_PROJECT);
-        var typeMatch    = (issueType === ALLOWED_ISSUE_TYPE);
-
-        log('Condition check', {
-          projectKey: projectKey,
-          allowedProject: ALLOWED_PROJECT,
-          projectMatch: projectMatch,
-          issueType: issueType,
-          allowedIssueType: ALLOWED_ISSUE_TYPE,
-          typeMatch: typeMatch,
-          finalResult: projectMatch && typeMatch
-        });
-
-        if (!projectMatch || !typeMatch) {
-          log('Condition NOT met — hiding panel');
+        if (projectKey !== ALLOWED_PROJECT || issueType !== ALLOWED_ISSUE_TYPE) {
+          log('Condition NOT met — hiding');
           container.classList.add('hidden');
           return;
         }
 
-        log('Condition MET — rendering button');
+        log('Condition MET — fetching atl_token');
 
-        var url = '/secure/WorkflowUIDispatcher.jspa?id=' + issueKey + '&action=' + WAIVER_ACTION_ID;
-        log('Transition URL', url);
+        // Step 2: Fetch atl_token (XSRF token) from Jira session
+        AdaptavistBridge.request({
+          url: '/rest/atlassian-connect/1/addons-admin',
+          type: 'GET'
+        }).then(function () {
+          // If that doesn't give us the token, we try the session endpoint
+          return AdaptavistBridge.request({
+            url: '/rest/auth/1/session',
+            type: 'GET'
+          });
+        }).then(function (sessionResponse) {
+          log('Session response', sessionResponse);
+        }).catch(function () {
+          log('Session endpoint not available — trying without token or alternate method');
+        }).finally(function () {
+          // Build the URL — try with and without atl_token
+          // On Cloud, the user's browser session may handle XSRF via cookies
+          var url = baseUrl + '/secure/WorkflowUIDispatcher.jspa?id=' + fullIssueKey + '&action=' + WAIVER_ACTION_ID;
 
-        container.innerHTML =
-          '<div class="status-row">' +
-          '  <span class="status-label">Issue:</span>' +
-          '  <span>' + issueKey + ' (ID: ' + issueId + ')</span>' +
-          '</div>' +
-          '<a href="' + url + '" class="waiver-btn">Waiver Request</a>';
+          log('Final transition URL', url);
 
-        log('Render complete');
+          container.innerHTML =
+            '<div class="status-row">' +
+            '  <span class="status-label">Issue:</span>' +
+            '  <span>' + fullIssueKey + '</span>' +
+            '</div>' +
+            '<a href="' + url + '" target="_top" class="waiver-btn">Waiver Request</a>';
+
+          log('Render complete');
+        });
 
       }).catch(function (err) {
-        log('REST API call FAILED', {
-          message: err.message || err,
-          error: JSON.stringify(err)
-        });
+        log('REST API FAILED', err);
         container.innerHTML = '<span class="loading">Error: ' + (err.message || err) + '</span>';
       });
     });
