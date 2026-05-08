@@ -41,14 +41,8 @@
     }
     .waiver-btn:hover { background-color: #0065FF; }
     .waiver-btn:active { background-color: #0747A6; }
-    .waiver-btn.processing { background-color: #B3D4FF; cursor: wait; }
-    .waiver-btn.success { background-color: #00875A; }
-    .waiver-btn.error { background-color: #DE350B; }
     .hidden { display: none; }
     .loading { font-size: 12px; color: #6B778C; }
-    .msg { margin-top: 8px; font-size: 12px; padding: 6px 10px; border-radius: 3px; }
-    .msg.success { background: #E3FCEF; color: #006644; }
-    .msg.error { background: #FFEBE6; color: #BF2600; }
     .debug-panel {
       margin-top: 12px;
       padding: 8px;
@@ -60,27 +54,9 @@
       color: #172B4D;
       white-space: pre-wrap;
       word-break: break-all;
+      max-height: 300px;
+      overflow-y: auto;
     }
-    .fields-form { margin-top: 10px; }
-    .fields-form label {
-      display: block;
-      font-size: 12px;
-      font-weight: 600;
-      color: #172B4D;
-      margin-bottom: 4px;
-      margin-top: 8px;
-    }
-    .fields-form input,
-    .fields-form select,
-    .fields-form textarea {
-      width: 100%;
-      padding: 6px 8px;
-      border: 1px solid #DFE1E6;
-      border-radius: 3px;
-      font-size: 13px;
-      font-family: inherit;
-    }
-    .fields-form textarea { resize: vertical; min-height: 60px; }
   </style>
 </head>
 <body>
@@ -93,7 +69,7 @@
     // ============================================================
     var ALLOWED_PROJECT    = 'PLC';
     var ALLOWED_ISSUE_TYPE = 'Checklist';
-    var WAIVER_ACTION_ID   = '2';  // string — REST API expects string
+    var WAIVER_ACTION_ID   = 2;
 
     // ============================================================
     // Debug logger
@@ -106,6 +82,7 @@
       }
       console.log(msg);
       debugEl.textContent += msg + '\n';
+      debugEl.scrollTop = debugEl.scrollHeight;
     }
 
     // ============================================================
@@ -136,13 +113,231 @@
     }
 
     // ============================================================
+    // atl_token extraction — tries EVERY possible method
+    // ============================================================
+    function getAtlToken(fullIssueKey, callback) {
+      log('=== Starting atl_token hunt ===');
+
+      // We try methods in sequence. First success wins.
+      tryMethod1_APCookie(function (token) {
+        if (token) return callback(token);
+        tryMethod2_APRequestPage(function (token) {
+          if (token) return callback(token);
+          tryMethod3_APRequestTransitionPage(fullIssueKey, function (token) {
+            if (token) return callback(token);
+            tryMethod4_DirectAPRequest(function (token) {
+              if (token) return callback(token);
+              tryMethod5_DocumentCookie(function (token) {
+                if (token) return callback(token);
+                tryMethod6_APContext(function (token) {
+                  callback(token); // null if all failed
+                });
+              });
+            });
+          });
+        });
+      });
+    }
+
+    // Method 1: AP.cookie.read
+    function tryMethod1_APCookie(callback) {
+      log('Method 1: AP.cookie.read("atlassian.xsrf.token")');
+      try {
+        if (window.AP && AP.cookie && AP.cookie.read) {
+          AP.cookie.read('atlassian.xsrf.token', function (value) {
+            log('Method 1 result', value || 'empty');
+            callback(value || null);
+          });
+        } else {
+          log('Method 1: AP.cookie not available');
+          callback(null);
+        }
+      } catch (e) {
+        log('Method 1 error', e.message);
+        callback(null);
+      }
+    }
+
+    // Method 2: AP.request to fetch a simple Jira page and scrape the token
+    function tryMethod2_APRequestPage(callback) {
+      log('Method 2: AP.request /secure/BrowseProjects.jspa');
+      try {
+        if (!window.AP || !AP.request) {
+          log('Method 2: AP.request not available');
+          callback(null);
+          return;
+        }
+        AP.request({
+          url: '/secure/BrowseProjects.jspa',
+          type: 'GET',
+          success: function (responseText) {
+            log('Method 2: Got response, length=' + responseText.length);
+            var token = extractTokenFromHtml(responseText, 'Method 2');
+            callback(token);
+          },
+          error: function (xhr, statusText, errorThrown) {
+            log('Method 2 error', { status: statusText, error: errorThrown });
+            callback(null);
+          }
+        });
+      } catch (e) {
+        log('Method 2 exception', e.message);
+        callback(null);
+      }
+    }
+
+    // Method 3: AP.request to fetch the transition page itself
+    function tryMethod3_APRequestTransitionPage(fullIssueKey, callback) {
+      log('Method 3: AP.request WorkflowUIDispatcher for ' + fullIssueKey);
+      try {
+        if (!window.AP || !AP.request) {
+          log('Method 3: AP.request not available');
+          callback(null);
+          return;
+        }
+        AP.request({
+          url: '/secure/WorkflowUIDispatcher.jspa?key=' + fullIssueKey + '&action=' + WAIVER_ACTION_ID,
+          type: 'GET',
+          success: function (responseText) {
+            log('Method 3: Got response, length=' + responseText.length);
+            var token = extractTokenFromHtml(responseText, 'Method 3');
+            callback(token);
+          },
+          error: function (xhr, statusText, errorThrown) {
+            log('Method 3 error', { status: statusText, error: errorThrown });
+            callback(null);
+          }
+        });
+      } catch (e) {
+        log('Method 3 exception', e.message);
+        callback(null);
+      }
+    }
+
+    // Method 4: AdaptavistBridge.request to fetch a page
+    function tryMethod4_DirectAPRequest(callback) {
+      log('Method 4: AdaptavistBridge.request /secure/ViewProfile.jspa');
+      try {
+        AdaptavistBridge.request({
+          url: '/secure/ViewProfile.jspa',
+          type: 'GET'
+        }).then(function (response) {
+          var text = typeof response === 'string' ? response : JSON.stringify(response);
+          log('Method 4: Got response, length=' + text.length);
+          var token = extractTokenFromHtml(text, 'Method 4');
+          callback(token);
+        }).catch(function (err) {
+          log('Method 4 error', err);
+          callback(null);
+        });
+      } catch (e) {
+        log('Method 4 exception', e.message);
+        callback(null);
+      }
+    }
+
+    // Method 5: Read document.cookie directly
+    function tryMethod5_DocumentCookie(callback) {
+      log('Method 5: document.cookie');
+      try {
+        var cookies = document.cookie;
+        log('Method 5 cookies', cookies || 'empty');
+
+        var match = cookies.match(/atlassian\.xsrf\.token=([^;]+)/);
+        if (match) {
+          log('Method 5: Found token in cookie', match[1]);
+          callback(match[1]);
+        } else {
+          // Also try parent cookies via AP
+          log('Method 5: No token in iframe cookies');
+          callback(null);
+        }
+      } catch (e) {
+        log('Method 5 error', e.message);
+        callback(null);
+      }
+    }
+
+    // Method 6: Check AP._data or AP context for token
+    function tryMethod6_APContext(callback) {
+      log('Method 6: Checking AP internals');
+      try {
+        if (window.AP) {
+          // Log everything available on AP for debugging
+          var apKeys = Object.keys(AP);
+          log('Method 6: AP keys', apKeys);
+
+          if (AP._data) {
+            log('Method 6: AP._data', JSON.stringify(AP._data).substring(0, 500));
+          }
+          if (AP.context) {
+            AP.context.getContext(function (ctx) {
+              log('Method 6: AP.context', ctx);
+            });
+          }
+          if (AP.getLocation) {
+            AP.getLocation(function (loc) {
+              log('Method 6: AP.getLocation', loc);
+            });
+          }
+        }
+        // Give async methods a moment
+        setTimeout(function () { callback(null); }, 1000);
+      } catch (e) {
+        log('Method 6 error', e.message);
+        callback(null);
+      }
+    }
+
+    // ============================================================
+    // Token extraction from HTML — tries multiple patterns
+    // ============================================================
+    function extractTokenFromHtml(html, methodName) {
+      if (!html || html.length < 50) {
+        log(methodName + ': Response too short to contain token');
+        return null;
+      }
+
+      // Log a snippet for debugging
+      log(methodName + ': First 300 chars', html.substring(0, 300));
+
+      var patterns = [
+        // <meta id="atlassian-token" name="atlassian-token" content="XXXX">
+        /name="atlassian-token"\s+content="([^"]+)"/,
+        /content="([^"]+)"\s+name="atlassian-token"/,
+        /id="atlassian-token"[^>]+content="([^"]+)"/,
+
+        // <input type="hidden" name="atl_token" value="XXXX">
+        /name="atl_token"\s+value="([^"]+)"/,
+        /name='atl_token'\s+value='([^']+)'/,
+
+        // atl_token=XXXX in URLs or JS
+        /atl_token=([a-f0-9]+_lin)/,
+        /atl_token['":\s]+([a-f0-9_]+_lin)/,
+
+        // Any 40-char hex followed by _lin (XSRF token format)
+        /([a-f0-9]{30,}_lin)/
+      ];
+
+      for (var i = 0; i < patterns.length; i++) {
+        var match = html.match(patterns[i]);
+        if (match && match[1]) {
+          log(methodName + ': FOUND token with pattern #' + (i + 1), match[1]);
+          return match[1];
+        }
+      }
+
+      log(methodName + ': No token found in response');
+      return null;
+    }
+
+    // ============================================================
     // Main
     // ============================================================
     waitForBridge(function (issueKey) {
       var container = document.getElementById('container');
       log('Bridge ready', issueKey);
 
-      // Step 1: Fetch issue data
       AdaptavistBridge.request({
         url: '/rest/api/2/issue/' + issueKey + '?fields=project,issuetype,status',
         type: 'GET'
@@ -153,8 +348,9 @@
         var issueType    = issue.fields.issuetype.name;
         var statusName   = issue.fields.status.name;
         var fullIssueKey = issue.key;
+        var baseUrl      = issue.self.split('/rest/')[0];
 
-        log('Parsed', { fullIssueKey: fullIssueKey, projectKey: projectKey, issueType: issueType, status: statusName });
+        log('Parsed', { fullIssueKey: fullIssueKey, projectKey: projectKey, issueType: issueType, baseUrl: baseUrl });
 
         if (projectKey !== ALLOWED_PROJECT || issueType !== ALLOWED_ISSUE_TYPE) {
           log('Condition NOT met — hiding');
@@ -162,220 +358,53 @@
           return;
         }
 
-        log('Condition MET');
+        log('Condition MET — hunting for atl_token');
 
-        // Step 2: Check what the transition requires (does it have a screen with fields?)
-        return AdaptavistBridge.request({
-          url: '/rest/api/2/issue/' + fullIssueKey + '/transitions?expand=transitions.fields',
-          type: 'GET'
-        }).then(function (transResponse) {
-          var transData = typeof transResponse === 'string' ? JSON.parse(transResponse) : transResponse;
-          var transitions = transData.transitions || [];
+        // Get the token, then render
+        getAtlToken(fullIssueKey, function (atlToken) {
+          log('=== Token hunt complete ===');
+          log('atl_token', atlToken || 'NOT FOUND');
 
-          log('Available transitions', transitions.map(function (t) {
-            return { id: t.id, name: t.name, hasFields: t.fields ? Object.keys(t.fields).length > 0 : false };
-          }));
+          // Build the URL
+          var url = baseUrl + '/secure/WorkflowUIDispatcher.jspa'
+            + '?key=' + encodeURIComponent(fullIssueKey)
+            + '&action=' + WAIVER_ACTION_ID;
 
-          // Find the waiver transition
-          var waiverTransition = null;
-          for (var i = 0; i < transitions.length; i++) {
-            if (transitions[i].id === WAIVER_ACTION_ID) {
-              waiverTransition = transitions[i];
-              break;
-            }
+          if (atlToken) {
+            url += '&atl_token=' + encodeURIComponent(atlToken);
           }
 
-          if (!waiverTransition) {
-            log('Transition ID ' + WAIVER_ACTION_ID + ' NOT available from current status "' + statusName + '"');
-            container.innerHTML =
-              '<span class="loading">Waiver Request not available from status "' + statusName + '"</span>';
-            return;
+          url += '&returnUrl='
+            + '&inline=true'
+            + '&decorator=dialog'
+            + '&_=' + Date.now();
+
+          log('Final URL', url);
+
+          container.innerHTML =
+            '<div class="status-row">' +
+            '  <span class="status-label">Issue:</span>' +
+            '  <span>' + fullIssueKey + '</span>' +
+            '</div>' +
+            '<a href="' + url + '" target="_top" class="waiver-btn">' +
+            '  Waiver Request' +
+            '</a>';
+
+          if (!atlToken) {
+            container.innerHTML +=
+              '<div style="margin-top:8px;font-size:11px;color:#BF2600;background:#FFEBE6;padding:6px 8px;border-radius:3px;">' +
+              '⚠ atl_token not found. Click may fail with XSRF error. Check debug panel for details.' +
+              '</div>';
           }
 
-          log('Found transition', { id: waiverTransition.id, name: waiverTransition.name });
-
-          // Check if the transition has required fields (screen)
-          var requiredFields = {};
-          var hasRequiredFields = false;
-          if (waiverTransition.fields) {
-            Object.keys(waiverTransition.fields).forEach(function (fieldId) {
-              var field = waiverTransition.fields[fieldId];
-              if (field.required) {
-                hasRequiredFields = true;
-                requiredFields[fieldId] = field;
-              }
-            });
-          }
-
-          log('Required fields', hasRequiredFields ? requiredFields : 'None — direct transition');
-
-          // Render
-          renderButton(fullIssueKey, waiverTransition, requiredFields, hasRequiredFields, statusName);
+          log('Render complete');
         });
 
       }).catch(function (err) {
-        log('FAILED', err);
+        log('REST API FAILED', err);
         container.innerHTML = '<span class="loading">Error: ' + (err.message || err) + '</span>';
       });
     });
-
-    // ============================================================
-    // Render button + optional fields form
-    // ============================================================
-    function renderButton(fullIssueKey, transition, requiredFields, hasRequiredFields, statusName) {
-      var container = document.getElementById('container');
-
-      var html =
-        '<div class="status-row">' +
-        '  <span class="status-label">Issue:</span>' +
-        '  <span>' + fullIssueKey + ' — ' + statusName + '</span>' +
-        '</div>';
-
-      // If transition has required fields, show a mini form
-      if (hasRequiredFields) {
-        html += '<div class="fields-form" id="fields-form">';
-        Object.keys(requiredFields).forEach(function (fieldId) {
-          var field = requiredFields[fieldId];
-          var fieldName = field.name || fieldId;
-
-          html += '<label>' + fieldName + ' (required)</label>';
-
-          if (field.allowedValues && field.allowedValues.length > 0) {
-            // Dropdown for fields with allowed values (like Resolution)
-            html += '<select id="field-' + fieldId + '" data-field-id="' + fieldId + '" class="transition-field">';
-            field.allowedValues.forEach(function (val) {
-              html += '<option value="' + (val.id || val.name) + '">' + (val.name || val.value || val.id) + '</option>';
-            });
-            html += '</select>';
-          } else {
-            // Text input for free text fields
-            html += '<input type="text" id="field-' + fieldId + '" data-field-id="' + fieldId + '" class="transition-field" />';
-          }
-        });
-        html += '</div>';
-      }
-
-      // Optional comment
-      html += '<div class="fields-form">';
-      html += '  <label>Comment (optional)</label>';
-      html += '  <textarea id="transition-comment" placeholder="Add a comment..."></textarea>';
-      html += '</div>';
-
-      html += '<button class="waiver-btn" id="waiver-btn" style="margin-top:10px">' + transition.name + '</button>';
-      html += '<div id="result-msg"></div>';
-
-      container.innerHTML = html;
-
-      // Attach click handler
-      document.getElementById('waiver-btn').addEventListener('click', function () {
-        executeTransition(fullIssueKey, transition, requiredFields, hasRequiredFields);
-      });
-    }
-
-    // ============================================================
-    // Execute transition via REST API
-    // No atl_token needed — AdaptavistBridge handles auth
-    // ============================================================
-    function executeTransition(fullIssueKey, transition, requiredFields, hasRequiredFields) {
-      var btn = document.getElementById('waiver-btn');
-      var msgEl = document.getElementById('result-msg');
-
-      btn.textContent = 'Processing...';
-      btn.classList.add('processing');
-      btn.disabled = true;
-      msgEl.innerHTML = '';
-
-      // Build request body
-      var body = {
-        transition: {
-          id: transition.id
-        }
-      };
-
-      // Collect field values if any
-      if (hasRequiredFields) {
-        body.fields = {};
-        var fieldInputs = document.querySelectorAll('.transition-field');
-        for (var i = 0; i < fieldInputs.length; i++) {
-          var input = fieldInputs[i];
-          var fieldId = input.getAttribute('data-field-id');
-          var value = input.value;
-
-          if (value) {
-            // For fields with allowed values (Resolution etc.), wrap in object with id
-            if (input.tagName === 'SELECT') {
-              body.fields[fieldId] = { id: value };
-            } else {
-              body.fields[fieldId] = value;
-            }
-          }
-        }
-      }
-
-      // Add comment if present
-      var commentEl = document.getElementById('transition-comment');
-      var comment = commentEl ? commentEl.value.trim() : '';
-      if (comment) {
-        body.update = {
-          comment: [{
-            add: {
-              body: comment
-            }
-          }]
-        };
-      }
-
-      log('Executing transition', body);
-
-      AdaptavistBridge.request({
-        url: '/rest/api/2/issue/' + fullIssueKey + '/transitions',
-        type: 'POST',
-        contentType: 'application/json',
-        data: JSON.stringify(body)
-      }).then(function (response) {
-        log('Transition SUCCESS', response);
-
-        btn.textContent = '✓ Done';
-        btn.classList.remove('processing');
-        btn.classList.add('success');
-        msgEl.innerHTML = '<div class="msg success">Transition completed. Reloading...</div>';
-
-        // Reload the issue page after a short delay
-        setTimeout(function () {
-          if (window.AP && window.AP.navigator) {
-            AP.navigator.reload();
-          } else {
-            window.top.location.reload();
-          }
-        }, 1500);
-
-      }).catch(function (err) {
-        log('Transition FAILED', err);
-
-        var errMsg = '';
-        try {
-          var errObj = typeof err === 'string' ? JSON.parse(err) : err;
-          if (errObj.errorMessages) {
-            errMsg = errObj.errorMessages.join(', ');
-          } else if (errObj.errors) {
-            errMsg = JSON.stringify(errObj.errors);
-          } else {
-            errMsg = err.message || JSON.stringify(err);
-          }
-        } catch (e) {
-          errMsg = err.message || String(err);
-        }
-
-        btn.textContent = 'Waiver Request';
-        btn.classList.remove('processing');
-        btn.classList.add('error');
-        btn.disabled = false;
-        msgEl.innerHTML = '<div class="msg error">Failed: ' + errMsg + '</div>';
-
-        // Reset button style after a moment
-        setTimeout(function () { btn.classList.remove('error'); }, 3000);
-      });
-    }
   </script>
 </body>
 </html>
