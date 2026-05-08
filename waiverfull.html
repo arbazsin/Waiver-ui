@@ -10,199 +10,170 @@
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
       padding: 10px 12px;
     }
-    .status-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
-    .status-label { font-size: 11px; color: #6B778C; font-weight: 600; text-transform: uppercase; }
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .status-label {
+      font-size: 11px;
+      color: #6B778C;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
     .waiver-btn {
-      display: inline-flex; align-items: center; gap: 6px;
-      background-color: #0052CC; color: #FFFFFF; border: none; border-radius: 3px;
-      padding: 8px 16px; font-size: 14px; font-weight: 500; cursor: pointer;
-      width: 100%; justify-content: center; text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background-color: #0052CC;
+      color: #FFFFFF;
+      border: none;
+      border-radius: 3px;
+      padding: 8px 16px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      width: 100%;
+      justify-content: center;
+      text-decoration: none;
       transition: background-color 0.2s ease;
     }
     .waiver-btn:hover { background-color: #0065FF; }
     .waiver-btn:active { background-color: #0747A6; }
     .hidden { display: none; }
     .loading { font-size: 12px; color: #6B778C; }
-    #debug {
-      margin-top: 12px; padding: 8px; background: #F4F5F7; border: 1px solid #DFE1E6;
-      border-radius: 3px; font-size: 11px; font-family: monospace; color: #172B4D;
-      white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto;
+    .debug-panel {
+      margin-top: 12px;
+      padding: 8px;
+      background: #F4F5F7;
+      border: 1px solid #DFE1E6;
+      border-radius: 3px;
+      font-size: 11px;
+      font-family: monospace;
+      color: #172B4D;
+      white-space: pre-wrap;
+      word-break: break-all;
     }
   </style>
 </head>
 <body>
   <div id="container"><span class="loading">Loading...</span></div>
-  <div id="debug"></div>
+  <div id="debug" class="debug-panel"></div>
 
   <script>
     // ============================================================
-    // CONFIG
+    // CONFIGURATION
     // ============================================================
     var ALLOWED_PROJECT    = 'PLC';
     var ALLOWED_ISSUE_TYPE = 'Checklist';
     var WAIVER_ACTION_ID   = 2;
 
     // ============================================================
-    // Logger
+    // Debug logger
     // ============================================================
-    function log(msg, data) {
-      var line = '[WR] ' + msg;
-      if (data !== undefined) line += ': ' + (typeof data === 'object' ? JSON.stringify(data) : data);
-      console.log(line);
-      var d = document.getElementById('debug');
-      d.textContent += line + '\n';
-      d.scrollTop = d.scrollHeight;
+    var debugEl = document.getElementById('debug');
+    function log(label, data) {
+      var msg = '[WaiverReq] ' + label;
+      if (data !== undefined) {
+        msg += ': ' + (typeof data === 'object' ? JSON.stringify(data, null, 2) : data);
+      }
+      console.log(msg);
+      debugEl.textContent += msg + '\n';
     }
 
     // ============================================================
     // Wait for bridge
     // ============================================================
-    function waitForBridge(cb) {
-      var n = 0;
-      var iv = setInterval(function () {
-        n++;
-        var k = null;
-        if (window.AdaptavistBridgeContext && AdaptavistBridgeContext.context)
-          k = AdaptavistBridgeContext.context.issueKey;
-        if (k) { clearInterval(iv); cb(k); }
-        else if (n >= 50) {
-          clearInterval(iv);
-          log('Bridge never ready after 10s');
-          document.getElementById('container').innerHTML = '<span class="loading">Bridge timeout.</span>';
+    function waitForBridge(callback) {
+      var attempts = 0;
+      var maxAttempts = 50;
+      var interval = setInterval(function () {
+        attempts++;
+        var issueKey = null;
+        if (window.AdaptavistBridgeContext && window.AdaptavistBridgeContext.context) {
+          issueKey = window.AdaptavistBridgeContext.context.issueKey;
+        }
+        if (attempts === 1 || attempts % 5 === 0 || issueKey) {
+          log('Poll #' + attempts, { issueKey: issueKey || 'N/A' });
+        }
+        if (issueKey) {
+          clearInterval(interval);
+          callback(issueKey);
+        } else if (attempts >= maxAttempts) {
+          clearInterval(interval);
+          log('FAILED — Bridge never ready');
+          document.getElementById('container').innerHTML =
+            '<span class="loading">Unable to load issue context.</span>';
         }
       }, 200);
     }
 
     // ============================================================
-    // Get atl_token — ONE focused approach
-    // Fetch the issue's own transition page via AP.request
-    // The response HTML contains the token in a meta tag or form
+    // Get atl_token (XSRF token)
+    // Tries multiple methods since Cloud access varies
     // ============================================================
-    function getAtlToken(fullIssueKey, cb) {
+    function getAtlToken(callback) {
       log('Fetching atl_token...');
 
-      // Check what's available
-      log('window.AP exists', !!window.AP);
-      log('AP.request exists', !!(window.AP && AP.request));
-      log('AP.cookie exists', !!(window.AP && AP.cookie));
-
-      // Step A: Try AP.cookie first (fastest if it works)
-      if (window.AP && AP.cookie && AP.cookie.read) {
-        AP.cookie.read('atlassian.xsrf.token', function (val) {
-          log('AP.cookie result', val || 'empty');
-          if (val) { cb(val); return; }
-          // Cookie didn't work — fall through to page fetch
-          fetchTokenFromPage(fullIssueKey, cb);
-        });
-      } else {
-        fetchTokenFromPage(fullIssueKey, cb);
-      }
-    }
-
-    function fetchTokenFromPage(fullIssueKey, cb) {
-      // Step B: Fetch any Jira page that contains the atl_token
-      // Using AP.request directly (NOT AdaptavistBridge) to get raw HTML
-
-      var pages = [
-        '/secure/MyJiraHome.jspa',
-        '/secure/ViewProfile.jspa',
-        '/secure/BrowseProjects.jspa',
-        '/secure/Dashboard.jspa'
-      ];
-
-      tryNextPage(pages, 0, cb);
-    }
-
-    function tryNextPage(pages, index, cb) {
-      if (index >= pages.length) {
-        log('All page fetches exhausted — no token found');
-        // Last resort: try AdaptavistBridge
-        tryBridgeRequest(cb);
-        return;
-      }
-
-      var pageUrl = pages[index];
-      log('Trying page: ' + pageUrl);
-
-      try {
-        // Use AP.request directly
-        if (window.AP && AP.request) {
-          AP.request({
-            url: pageUrl,
-            type: 'GET',
-            success: function (body) {
-              log('Got response from ' + pageUrl + ', length=' + (body ? body.length : 0));
-
-              if (body && body.length > 0) {
-                // Log first 500 chars so we can see what we got
-                log('Response preview', body.substring(0, 500));
-
-                var token = scrapeToken(body);
-                if (token) {
-                  log('TOKEN FOUND from ' + pageUrl, token);
-                  cb(token);
-                  return;
-                }
-              }
-              // Try next page
-              tryNextPage(pages, index + 1, cb);
-            },
-            error: function (xhr) {
-              log(pageUrl + ' failed', {
-                status: xhr.status,
-                statusText: xhr.statusText,
-                response: xhr.responseText ? xhr.responseText.substring(0, 200) : 'empty'
-              });
-              tryNextPage(pages, index + 1, cb);
+      // Method 1: Try fetching any Jira page and extracting token from meta tag
+      AdaptavistBridge.request({
+        url: '/rest/api/2/myself',
+        type: 'GET'
+      }).then(function (response) {
+        // The token might be in the AP context
+        // Try reading it from AP cookie
+        if (window.AP && window.AP.cookie) {
+          AP.cookie.read('atlassian.xsrf.token', function (token) {
+            if (token) {
+              log('Got atl_token from AP cookie', token);
+              callback(token);
+            } else {
+              log('AP cookie empty — trying HTML scrape');
+              scrapeTokenFromPage(callback);
             }
           });
         } else {
-          log('AP.request not available — skipping page fetch');
-          tryBridgeRequest(cb);
+          log('AP.cookie not available — trying HTML scrape');
+          scrapeTokenFromPage(callback);
         }
-      } catch (e) {
-        log('Exception on ' + pageUrl, e.message);
-        tryNextPage(pages, index + 1, cb);
-      }
-    }
-
-    function tryBridgeRequest(cb) {
-      log('Trying AdaptavistBridge.request as fallback');
-      AdaptavistBridge.request({
-        url: '/secure/MyJiraHome.jspa',
-        type: 'GET'
-      }).then(function (resp) {
-        var text = typeof resp === 'string' ? resp : JSON.stringify(resp);
-        log('Bridge response length', text.length);
-        log('Bridge response preview', text.substring(0, 500));
-        var token = scrapeToken(text);
-        if (token) { log('TOKEN FOUND via bridge', token); cb(token); }
-        else { log('No token in bridge response either'); cb(null); }
       }).catch(function (err) {
-        log('Bridge fallback failed', err);
-        cb(null);
+        log('myself endpoint failed', err);
+        scrapeTokenFromPage(callback);
       });
     }
 
-    // ============================================================
-    // Scrape token from HTML string
-    // ============================================================
-    function scrapeToken(html) {
-      var patterns = [
-        /name="atlassian-token"\s+content="([^"]+)"/i,
-        /content="([^"]+)"\s+name="atlassian-token"/i,
-        /id="atlassian-token"[^>]+content="([^"]+)"/i,
-        /name="atl_token"\s+value="([^"]+)"/i,
-        /name='atl_token'\s+value='([^']+)'/i,
-        /atl_token=([a-f0-9]+_lin)/i,
-        /["']atl_token["']\s*:\s*["']([^"']+)["']/i,
-        /([a-f0-9]{30,}_lin)/
-      ];
-      for (var i = 0; i < patterns.length; i++) {
-        var m = html.match(patterns[i]);
-        if (m && m[1]) return m[1];
-      }
-      return null;
+    function scrapeTokenFromPage(callback) {
+      // Method 2: Fetch the issue page HTML and extract atl_token from it
+      AdaptavistBridge.request({
+        url: '/secure/Dashboard.jspa',
+        type: 'GET',
+        dataType: 'html'
+      }).then(function (html) {
+        var htmlStr = typeof html === 'string' ? html : '';
+        log('Dashboard HTML length', htmlStr.length);
+
+        // Look for atl_token in the HTML
+        // Pattern: atl_token=XXXXX or name="atl_token" content="XXXXX"
+        var tokenMatch = htmlStr.match(/atl_token=([a-f0-9]+_lin)/);
+        if (!tokenMatch) {
+          tokenMatch = htmlStr.match(/name="atlassian-token"\s+content="([^"]+)"/);
+        }
+        if (!tokenMatch) {
+          tokenMatch = htmlStr.match(/atl_token['":\s]+([a-f0-9_]+lin)/);
+        }
+
+        if (tokenMatch && tokenMatch[1]) {
+          log('Got atl_token from page scrape', tokenMatch[1]);
+          callback(tokenMatch[1]);
+        } else {
+          log('Could not extract atl_token — will try without it');
+          callback(null);
+        }
+      }).catch(function (err) {
+        log('Page scrape failed', err);
+        callback(null);
+      });
     }
 
     // ============================================================
@@ -212,6 +183,7 @@
       var container = document.getElementById('container');
       log('Bridge ready', issueKey);
 
+      // Step 1: Fetch issue data
       AdaptavistBridge.request({
         url: '/rest/api/2/issue/' + issueKey + '?fields=project,issuetype,status',
         type: 'GET'
@@ -220,20 +192,32 @@
 
         var projectKey   = issue.fields.project.key;
         var issueType    = issue.fields.issuetype.name;
+        var statusName   = issue.fields.status.name;
         var fullIssueKey = issue.key;
         var baseUrl      = issue.self.split('/rest/')[0];
 
-        log('Issue', { fullIssueKey: fullIssueKey, project: projectKey, type: issueType, base: baseUrl });
+        log('Parsed', {
+          fullIssueKey: fullIssueKey,
+          projectKey: projectKey,
+          issueType: issueType,
+          status: statusName,
+          baseUrl: baseUrl
+        });
 
+        // Condition check
         if (projectKey !== ALLOWED_PROJECT || issueType !== ALLOWED_ISSUE_TYPE) {
+          log('Condition NOT met — hiding');
           container.classList.add('hidden');
           return;
         }
 
-        getAtlToken(fullIssueKey, function (atlToken) {
-          log('=== RESULT ===');
-          log('atl_token', atlToken || 'NOT FOUND — check debug above');
+        log('Condition MET');
 
+        // Step 2: Get atl_token, then render
+        getAtlToken(function (atlToken) {
+
+          // Build the full URL matching the exact format:
+          // /secure/WorkflowUIDispatcher.jspa?key=PLC-18723&action=2&atl_token=XXX&returnUrl=&inline=true&decorator=dialog&_=timestamp
           var url = baseUrl + '/secure/WorkflowUIDispatcher.jspa'
             + '?key=' + encodeURIComponent(fullIssueKey)
             + '&action=' + WAIVER_ACTION_ID;
@@ -242,9 +226,12 @@
             url += '&atl_token=' + encodeURIComponent(atlToken);
           }
 
-          url += '&returnUrl=&inline=true&decorator=dialog&_=' + Date.now();
+          url += '&returnUrl='
+            + '&inline=true'
+            + '&decorator=dialog'
+            + '&_=' + Date.now();
 
-          log('URL', url);
+          log('Final URL', url);
 
           container.innerHTML =
             '<div class="status-row">' +
@@ -253,15 +240,11 @@
             '</div>' +
             '<a href="' + url + '" target="_top" class="waiver-btn">Waiver Request</a>';
 
-          if (!atlToken) {
-            container.innerHTML +=
-              '<div style="margin-top:8px;font-size:11px;color:#BF2600;background:#FFEBE6;padding:6px 8px;border-radius:3px;">' +
-              'Token not found. Check debug panel — share the output and we will fix it.</div>';
-          }
+          log('Render complete');
         });
 
       }).catch(function (err) {
-        log('Issue fetch failed', err);
+        log('REST API FAILED', err);
         container.innerHTML = '<span class="loading">Error: ' + (err.message || err) + '</span>';
       });
     });
