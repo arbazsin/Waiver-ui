@@ -3,82 +3,112 @@
 <head>
   <meta charset="UTF-8" />
   <title>Waiver Request</title>
+  <script src="https://assets.hydrogen.sagittarius.connect.product.adaptavist.com/public/js/bridge.js"></script>
   <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      padding: 16px;
-      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+      padding: 10px 12px;
     }
-    .btn {
-      padding: 10px 20px;
-      font-size: 14px;
-      font-weight: 600;
-      color: #fff;
-      background: #0052CC;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
+
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
     }
-    .btn:hover { background: #0065FF; }
-    #debug {
-      margin-top: 12px;
+
+    .status-label {
       font-size: 11px;
-      color: #666;
-      white-space: pre-wrap;
-      word-break: break-all;
+      color: #6B778C;
+      font-weight: 600;
+      text-transform: uppercase;
     }
+
+    .status-badge {
+      background-color: #DEEBFF;
+      color: #0747A6;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .waiver-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background-color: #0052CC;
+      color: #FFFFFF;
+      border: none;
+      border-radius: 3px;
+      padding: 8px 16px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      width: 100%;
+      justify-content: center;
+      text-decoration: none;
+      transition: background-color 0.2s ease;
+    }
+
+    .waiver-btn:hover { background-color: #0065FF; }
+    .waiver-btn:active { background-color: #0747A6; }
+
+    .hidden { display: none; }
   </style>
 </head>
 <body>
 
-  <button class="btn" id="openTransition">Waiver Request</button>
-  <div id="debug"></div>
+  <div id="container"></div>
 
   <script>
-    var TRANSITION_ID = 2;
+    // ============================================================
+    // CONFIGURATION
+    // ============================================================
+    var ALLOWED_PROJECT    = 'PLC';
+    var ALLOWED_ISSUE_TYPE = 'Checklist';
+    var WAIVER_ACTION_ID   = 2;   // Waiver Request transition ID on Cloud
 
-    function log(msg) {
-      var el = document.getElementById('debug');
-      el.textContent += msg + '\n';
-    }
+    // ============================================================
 
-    // Get issueKey and baseUrl from referrer
-    var referrer = document.referrer || '';
-    var issueKey = null;
-    var baseUrl = null;
+    (function () {
+      var container = document.getElementById('container');
+      var issueKey  = AdaptavistBridgeContext.context.issueKey;
 
-    if (referrer) {
-      var m = referrer.match(/\/browse\/([A-Z][A-Z0-9_]+-\d+)/) ||
-              referrer.match(/selectedIssue=([A-Z][A-Z0-9_]+-\d+)/) ||
-              referrer.match(/\/issue\/([A-Z][A-Z0-9_]+-\d+)/);
-      if (m) issueKey = m[1];
+      if (!issueKey) { container.classList.add('hidden'); return; }
 
-      var b = referrer.match(/^(https?:\/\/[^\/]+)/);
-      if (b) baseUrl = b[1];
-    }
+      AdaptavistBridge.request({
+        url: '/rest/api/2/issue/' + issueKey + '?fields=project,issuetype,status',
+        type: 'GET'
+      }).then(function (response) {
+        var issue      = typeof response === 'string' ? JSON.parse(response) : response;
+        var projectKey = issue.fields.project.key;
+        var issueType  = issue.fields.issuetype.name;
+        var statusName = issue.fields.status.name;
+        var issueId    = issue.id;
 
-    log('issueKey: ' + issueKey);
-    log('baseUrl: ' + baseUrl);
+        // Condition: PLC project + Checklist issue type only
+        if (projectKey !== ALLOWED_PROJECT || issueType !== ALLOWED_ISSUE_TYPE) {
+          container.classList.add('hidden');
+          return;
+        }
 
-    document.getElementById('openTransition').addEventListener('click', function () {
-      if (!issueKey || !baseUrl) {
-        alert('Could not detect issue. Make sure you are on an issue page.');
-        return;
-      }
+        var url = '/secure/WorkflowUIDispatcher.jspa?id=' + issueId + '&action=' + WAIVER_ACTION_ID;
 
-      var url = baseUrl
-        + '/secure/WorkflowUIDispatcher.jspa'
-        + '?key=' + issueKey
-        + '&action=' + TRANSITION_ID
-        + '&inline=true'
-        + '&decorator=dialog'
-        + '&_=' + Date.now();
+        container.innerHTML =
+          '<div class="status-row">' +
+          '  <span class="status-label">Status:</span>' +
+          '  <span class="status-badge">' + statusName + '</span>' +
+          '</div>' +
+          '<a href="' + url + '" class="waiver-btn">Waiver Request</a>';
 
-      log('Opening: ' + url);
-
-      // Open in parent window
-      window.top.location.href = url;
-    });
+      }).catch(function (err) {
+        console.error('Waiver Request fragment error:', err);
+        container.classList.add('hidden');
+      });
+    })();
   </script>
 
 </body>
