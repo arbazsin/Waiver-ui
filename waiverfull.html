@@ -41,8 +41,14 @@
     }
     .waiver-btn:hover { background-color: #0065FF; }
     .waiver-btn:active { background-color: #0747A6; }
+    .waiver-btn.processing { background-color: #B3D4FF; cursor: wait; }
+    .waiver-btn.success { background-color: #00875A; }
+    .waiver-btn.error { background-color: #DE350B; }
     .hidden { display: none; }
     .loading { font-size: 12px; color: #6B778C; }
+    .msg { margin-top: 8px; font-size: 12px; padding: 6px 10px; border-radius: 3px; }
+    .msg.success { background: #E3FCEF; color: #006644; }
+    .msg.error { background: #FFEBE6; color: #BF2600; }
     .debug-panel {
       margin-top: 12px;
       padding: 8px;
@@ -55,6 +61,26 @@
       white-space: pre-wrap;
       word-break: break-all;
     }
+    .fields-form { margin-top: 10px; }
+    .fields-form label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: #172B4D;
+      margin-bottom: 4px;
+      margin-top: 8px;
+    }
+    .fields-form input,
+    .fields-form select,
+    .fields-form textarea {
+      width: 100%;
+      padding: 6px 8px;
+      border: 1px solid #DFE1E6;
+      border-radius: 3px;
+      font-size: 13px;
+      font-family: inherit;
+    }
+    .fields-form textarea { resize: vertical; min-height: 60px; }
   </style>
 </head>
 <body>
@@ -67,7 +93,7 @@
     // ============================================================
     var ALLOWED_PROJECT    = 'PLC';
     var ALLOWED_ISSUE_TYPE = 'Checklist';
-    var WAIVER_ACTION_ID   = 2;
+    var WAIVER_ACTION_ID   = '2';  // string — REST API expects string
 
     // ============================================================
     // Debug logger
@@ -110,73 +136,6 @@
     }
 
     // ============================================================
-    // Get atl_token (XSRF token)
-    // Tries multiple methods since Cloud access varies
-    // ============================================================
-    function getAtlToken(callback) {
-      log('Fetching atl_token...');
-
-      // Method 1: Try fetching any Jira page and extracting token from meta tag
-      AdaptavistBridge.request({
-        url: '/rest/api/2/myself',
-        type: 'GET'
-      }).then(function (response) {
-        // The token might be in the AP context
-        // Try reading it from AP cookie
-        if (window.AP && window.AP.cookie) {
-          AP.cookie.read('atlassian.xsrf.token', function (token) {
-            if (token) {
-              log('Got atl_token from AP cookie', token);
-              callback(token);
-            } else {
-              log('AP cookie empty — trying HTML scrape');
-              scrapeTokenFromPage(callback);
-            }
-          });
-        } else {
-          log('AP.cookie not available — trying HTML scrape');
-          scrapeTokenFromPage(callback);
-        }
-      }).catch(function (err) {
-        log('myself endpoint failed', err);
-        scrapeTokenFromPage(callback);
-      });
-    }
-
-    function scrapeTokenFromPage(callback) {
-      // Method 2: Fetch the issue page HTML and extract atl_token from it
-      AdaptavistBridge.request({
-        url: '/secure/Dashboard.jspa',
-        type: 'GET',
-        dataType: 'html'
-      }).then(function (html) {
-        var htmlStr = typeof html === 'string' ? html : '';
-        log('Dashboard HTML length', htmlStr.length);
-
-        // Look for atl_token in the HTML
-        // Pattern: atl_token=XXXXX or name="atl_token" content="XXXXX"
-        var tokenMatch = htmlStr.match(/atl_token=([a-f0-9]+_lin)/);
-        if (!tokenMatch) {
-          tokenMatch = htmlStr.match(/name="atlassian-token"\s+content="([^"]+)"/);
-        }
-        if (!tokenMatch) {
-          tokenMatch = htmlStr.match(/atl_token['":\s]+([a-f0-9_]+lin)/);
-        }
-
-        if (tokenMatch && tokenMatch[1]) {
-          log('Got atl_token from page scrape', tokenMatch[1]);
-          callback(tokenMatch[1]);
-        } else {
-          log('Could not extract atl_token — will try without it');
-          callback(null);
-        }
-      }).catch(function (err) {
-        log('Page scrape failed', err);
-        callback(null);
-      });
-    }
-
-    // ============================================================
     // Main
     // ============================================================
     waitForBridge(function (issueKey) {
@@ -194,17 +153,9 @@
         var issueType    = issue.fields.issuetype.name;
         var statusName   = issue.fields.status.name;
         var fullIssueKey = issue.key;
-        var baseUrl      = issue.self.split('/rest/')[0];
 
-        log('Parsed', {
-          fullIssueKey: fullIssueKey,
-          projectKey: projectKey,
-          issueType: issueType,
-          status: statusName,
-          baseUrl: baseUrl
-        });
+        log('Parsed', { fullIssueKey: fullIssueKey, projectKey: projectKey, issueType: issueType, status: statusName });
 
-        // Condition check
         if (projectKey !== ALLOWED_PROJECT || issueType !== ALLOWED_ISSUE_TYPE) {
           log('Condition NOT met — hiding');
           container.classList.add('hidden');
@@ -213,41 +164,218 @@
 
         log('Condition MET');
 
-        // Step 2: Get atl_token, then render
-        getAtlToken(function (atlToken) {
+        // Step 2: Check what the transition requires (does it have a screen with fields?)
+        return AdaptavistBridge.request({
+          url: '/rest/api/2/issue/' + fullIssueKey + '/transitions?expand=transitions.fields',
+          type: 'GET'
+        }).then(function (transResponse) {
+          var transData = typeof transResponse === 'string' ? JSON.parse(transResponse) : transResponse;
+          var transitions = transData.transitions || [];
 
-          // Build the full URL matching the exact format:
-          // /secure/WorkflowUIDispatcher.jspa?key=PLC-18723&action=2&atl_token=XXX&returnUrl=&inline=true&decorator=dialog&_=timestamp
-          var url = baseUrl + '/secure/WorkflowUIDispatcher.jspa'
-            + '?key=' + encodeURIComponent(fullIssueKey)
-            + '&action=' + WAIVER_ACTION_ID;
+          log('Available transitions', transitions.map(function (t) {
+            return { id: t.id, name: t.name, hasFields: t.fields ? Object.keys(t.fields).length > 0 : false };
+          }));
 
-          if (atlToken) {
-            url += '&atl_token=' + encodeURIComponent(atlToken);
+          // Find the waiver transition
+          var waiverTransition = null;
+          for (var i = 0; i < transitions.length; i++) {
+            if (transitions[i].id === WAIVER_ACTION_ID) {
+              waiverTransition = transitions[i];
+              break;
+            }
           }
 
-          url += '&returnUrl='
-            + '&inline=true'
-            + '&decorator=dialog'
-            + '&_=' + Date.now();
+          if (!waiverTransition) {
+            log('Transition ID ' + WAIVER_ACTION_ID + ' NOT available from current status "' + statusName + '"');
+            container.innerHTML =
+              '<span class="loading">Waiver Request not available from status "' + statusName + '"</span>';
+            return;
+          }
 
-          log('Final URL', url);
+          log('Found transition', { id: waiverTransition.id, name: waiverTransition.name });
 
-          container.innerHTML =
-            '<div class="status-row">' +
-            '  <span class="status-label">Issue:</span>' +
-            '  <span>' + fullIssueKey + '</span>' +
-            '</div>' +
-            '<a href="' + url + '" target="_top" class="waiver-btn">Waiver Request</a>';
+          // Check if the transition has required fields (screen)
+          var requiredFields = {};
+          var hasRequiredFields = false;
+          if (waiverTransition.fields) {
+            Object.keys(waiverTransition.fields).forEach(function (fieldId) {
+              var field = waiverTransition.fields[fieldId];
+              if (field.required) {
+                hasRequiredFields = true;
+                requiredFields[fieldId] = field;
+              }
+            });
+          }
 
-          log('Render complete');
+          log('Required fields', hasRequiredFields ? requiredFields : 'None — direct transition');
+
+          // Render
+          renderButton(fullIssueKey, waiverTransition, requiredFields, hasRequiredFields, statusName);
         });
 
       }).catch(function (err) {
-        log('REST API FAILED', err);
+        log('FAILED', err);
         container.innerHTML = '<span class="loading">Error: ' + (err.message || err) + '</span>';
       });
     });
+
+    // ============================================================
+    // Render button + optional fields form
+    // ============================================================
+    function renderButton(fullIssueKey, transition, requiredFields, hasRequiredFields, statusName) {
+      var container = document.getElementById('container');
+
+      var html =
+        '<div class="status-row">' +
+        '  <span class="status-label">Issue:</span>' +
+        '  <span>' + fullIssueKey + ' — ' + statusName + '</span>' +
+        '</div>';
+
+      // If transition has required fields, show a mini form
+      if (hasRequiredFields) {
+        html += '<div class="fields-form" id="fields-form">';
+        Object.keys(requiredFields).forEach(function (fieldId) {
+          var field = requiredFields[fieldId];
+          var fieldName = field.name || fieldId;
+
+          html += '<label>' + fieldName + ' (required)</label>';
+
+          if (field.allowedValues && field.allowedValues.length > 0) {
+            // Dropdown for fields with allowed values (like Resolution)
+            html += '<select id="field-' + fieldId + '" data-field-id="' + fieldId + '" class="transition-field">';
+            field.allowedValues.forEach(function (val) {
+              html += '<option value="' + (val.id || val.name) + '">' + (val.name || val.value || val.id) + '</option>';
+            });
+            html += '</select>';
+          } else {
+            // Text input for free text fields
+            html += '<input type="text" id="field-' + fieldId + '" data-field-id="' + fieldId + '" class="transition-field" />';
+          }
+        });
+        html += '</div>';
+      }
+
+      // Optional comment
+      html += '<div class="fields-form">';
+      html += '  <label>Comment (optional)</label>';
+      html += '  <textarea id="transition-comment" placeholder="Add a comment..."></textarea>';
+      html += '</div>';
+
+      html += '<button class="waiver-btn" id="waiver-btn" style="margin-top:10px">' + transition.name + '</button>';
+      html += '<div id="result-msg"></div>';
+
+      container.innerHTML = html;
+
+      // Attach click handler
+      document.getElementById('waiver-btn').addEventListener('click', function () {
+        executeTransition(fullIssueKey, transition, requiredFields, hasRequiredFields);
+      });
+    }
+
+    // ============================================================
+    // Execute transition via REST API
+    // No atl_token needed — AdaptavistBridge handles auth
+    // ============================================================
+    function executeTransition(fullIssueKey, transition, requiredFields, hasRequiredFields) {
+      var btn = document.getElementById('waiver-btn');
+      var msgEl = document.getElementById('result-msg');
+
+      btn.textContent = 'Processing...';
+      btn.classList.add('processing');
+      btn.disabled = true;
+      msgEl.innerHTML = '';
+
+      // Build request body
+      var body = {
+        transition: {
+          id: transition.id
+        }
+      };
+
+      // Collect field values if any
+      if (hasRequiredFields) {
+        body.fields = {};
+        var fieldInputs = document.querySelectorAll('.transition-field');
+        for (var i = 0; i < fieldInputs.length; i++) {
+          var input = fieldInputs[i];
+          var fieldId = input.getAttribute('data-field-id');
+          var value = input.value;
+
+          if (value) {
+            // For fields with allowed values (Resolution etc.), wrap in object with id
+            if (input.tagName === 'SELECT') {
+              body.fields[fieldId] = { id: value };
+            } else {
+              body.fields[fieldId] = value;
+            }
+          }
+        }
+      }
+
+      // Add comment if present
+      var commentEl = document.getElementById('transition-comment');
+      var comment = commentEl ? commentEl.value.trim() : '';
+      if (comment) {
+        body.update = {
+          comment: [{
+            add: {
+              body: comment
+            }
+          }]
+        };
+      }
+
+      log('Executing transition', body);
+
+      AdaptavistBridge.request({
+        url: '/rest/api/2/issue/' + fullIssueKey + '/transitions',
+        type: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify(body)
+      }).then(function (response) {
+        log('Transition SUCCESS', response);
+
+        btn.textContent = '✓ Done';
+        btn.classList.remove('processing');
+        btn.classList.add('success');
+        msgEl.innerHTML = '<div class="msg success">Transition completed. Reloading...</div>';
+
+        // Reload the issue page after a short delay
+        setTimeout(function () {
+          if (window.AP && window.AP.navigator) {
+            AP.navigator.reload();
+          } else {
+            window.top.location.reload();
+          }
+        }, 1500);
+
+      }).catch(function (err) {
+        log('Transition FAILED', err);
+
+        var errMsg = '';
+        try {
+          var errObj = typeof err === 'string' ? JSON.parse(err) : err;
+          if (errObj.errorMessages) {
+            errMsg = errObj.errorMessages.join(', ');
+          } else if (errObj.errors) {
+            errMsg = JSON.stringify(errObj.errors);
+          } else {
+            errMsg = err.message || JSON.stringify(err);
+          }
+        } catch (e) {
+          errMsg = err.message || String(err);
+        }
+
+        btn.textContent = 'Waiver Request';
+        btn.classList.remove('processing');
+        btn.classList.add('error');
+        btn.disabled = false;
+        msgEl.innerHTML = '<div class="msg error">Failed: ' + errMsg + '</div>';
+
+        // Reset button style after a moment
+        setTimeout(function () { btn.classList.remove('error'); }, 3000);
+      });
+    }
   </script>
 </body>
 </html>
