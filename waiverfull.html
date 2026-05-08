@@ -43,10 +43,26 @@
     .waiver-btn:active { background-color: #0747A6; }
     .hidden { display: none; }
     .loading { font-size: 12px; color: #6B778C; }
+    .debug-panel {
+      margin-top: 12px;
+      padding: 8px;
+      background: #F4F5F7;
+      border: 1px solid #DFE1E6;
+      border-radius: 3px;
+      font-size: 11px;
+      font-family: monospace;
+      color: #172B4D;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
   </style>
 </head>
 <body>
   <div id="container"><span class="loading">Loading...</span></div>
+
+  <!-- Debug panel visible directly on the page (remove after testing) -->
+  <div id="debug" class="debug-panel"></div>
+
   <script>
     // ============================================================
     // CONFIGURATION
@@ -56,73 +72,156 @@
     var WAIVER_ACTION_ID   = 2;
 
     // ============================================================
-    // Wait for Adaptavist Bridge to be ready before doing anything
+    // Debug logger — writes to BOTH console AND the on-page panel
+    // so you can see output even without switching iframe context
+    // ============================================================
+    var debugEl = document.getElementById('debug');
+    function log(label, data) {
+      var msg = '[WaiverReq] ' + label;
+      if (data !== undefined) {
+        msg += ': ' + (typeof data === 'object' ? JSON.stringify(data, null, 2) : data);
+      }
+      console.log(msg);
+      debugEl.textContent += msg + '\n';
+    }
+
+    // ============================================================
+    // Step 1: Check what's available immediately on page load
+    // ============================================================
+    log('Page loaded');
+    log('window.AdaptavistBridge exists', !!window.AdaptavistBridge);
+    log('window.AdaptavistBridgeContext exists', !!window.AdaptavistBridgeContext);
+
+    if (window.AdaptavistBridgeContext) {
+      log('Context object', window.AdaptavistBridgeContext.context);
+    }
+
+    // ============================================================
+    // Step 2: Wait for bridge context to be ready
     // ============================================================
     function waitForBridge(callback) {
       var attempts = 0;
-      var maxAttempts = 50;  // 50 x 200ms = 10 seconds max wait
+      var maxAttempts = 50;
+
+      log('Starting bridge polling (max ' + maxAttempts + ' attempts, 200ms each)');
+
       var interval = setInterval(function () {
         attempts++;
-        console.log('Bridge check attempt ' + attempts,
-          'Bridge:', !!window.AdaptavistBridge,
-          'Context:', !!window.AdaptavistBridgeContext,
-          'IssueKey:', window.AdaptavistBridgeContext && window.AdaptavistBridgeContext.context
-            ? window.AdaptavistBridgeContext.context.issueKey
-            : 'N/A'
-        );
 
-        if (window.AdaptavistBridgeContext
-            && window.AdaptavistBridgeContext.context
-            && window.AdaptavistBridgeContext.context.issueKey) {
+        var hasBridge  = !!window.AdaptavistBridge;
+        var hasContext = !!window.AdaptavistBridgeContext;
+        var issueKey   = null;
+
+        if (hasContext && window.AdaptavistBridgeContext.context) {
+          issueKey = window.AdaptavistBridgeContext.context.issueKey;
+        }
+
+        // Log every 5th attempt to avoid spam, plus first and last
+        if (attempts === 1 || attempts % 5 === 0 || issueKey) {
+          log('Poll #' + attempts, {
+            bridge: hasBridge,
+            context: hasContext,
+            issueKey: issueKey || 'N/A',
+            fullContext: hasContext ? window.AdaptavistBridgeContext.context : 'N/A'
+          });
+        }
+
+        if (issueKey) {
           clearInterval(interval);
-          callback(window.AdaptavistBridgeContext.context.issueKey);
+          log('Bridge ready after ' + attempts + ' attempts');
+          callback(issueKey);
         } else if (attempts >= maxAttempts) {
           clearInterval(interval);
-          console.error('Adaptavist Bridge context never became available after ' + maxAttempts + ' attempts');
+          log('FAILED — Bridge context never became available');
+          log('Final state', {
+            bridge: hasBridge,
+            context: hasContext,
+            contextObj: hasContext ? window.AdaptavistBridgeContext : 'undefined'
+          });
           document.getElementById('container').innerHTML =
-            '<span class="loading">Unable to load issue context.</span>';
+            '<span class="loading">Unable to load issue context after 10s.</span>';
         }
       }, 200);
     }
 
     // ============================================================
-    // Main logic — only runs once bridge is ready
+    // Step 3: Fetch issue data and render
     // ============================================================
     waitForBridge(function (issueKey) {
       var container = document.getElementById('container');
+      var apiUrl = '/rest/api/2/issue/' + issueKey + '?fields=project,issuetype,status';
 
-      console.log('Bridge ready. Issue key:', issueKey);
+      log('Calling REST API', apiUrl);
 
       AdaptavistBridge.request({
-        url: '/rest/api/2/issue/' + issueKey + '?fields=project,issuetype,status',
+        url: apiUrl,
         type: 'GET'
       }).then(function (response) {
-        var issue      = typeof response === 'string' ? JSON.parse(response) : response;
+        log('Raw API response type', typeof response);
+        log('Raw API response', response);
+
+        var issue;
+        try {
+          issue = typeof response === 'string' ? JSON.parse(response) : response;
+        } catch (e) {
+          log('JSON parse FAILED', e.message);
+          container.innerHTML = '<span class="loading">Failed to parse API response.</span>';
+          return;
+        }
+
         var projectKey = issue.fields.project.key;
         var issueType  = issue.fields.issuetype.name;
+        var statusName = issue.fields.status.name;
         var issueId    = issue.id;
 
-        console.log('Project:', projectKey, 'IssueType:', issueType, 'ID:', issueId);
+        log('Parsed issue data', {
+          projectKey: projectKey,
+          issueType: issueType,
+          status: statusName,
+          issueId: issueId,
+          issueKey: issueKey
+        });
 
-        // Condition: PLC project + Checklist issue type only
-        if (projectKey !== ALLOWED_PROJECT || issueType !== ALLOWED_ISSUE_TYPE) {
-          console.log('Condition not met — hiding panel');
+        // Condition check
+        var projectMatch = (projectKey === ALLOWED_PROJECT);
+        var typeMatch    = (issueType === ALLOWED_ISSUE_TYPE);
+
+        log('Condition check', {
+          projectKey: projectKey,
+          allowedProject: ALLOWED_PROJECT,
+          projectMatch: projectMatch,
+          issueType: issueType,
+          allowedIssueType: ALLOWED_ISSUE_TYPE,
+          typeMatch: typeMatch,
+          finalResult: projectMatch && typeMatch
+        });
+
+        if (!projectMatch || !typeMatch) {
+          log('Condition NOT met — hiding panel');
           container.classList.add('hidden');
           return;
         }
 
+        log('Condition MET — rendering button');
+
         var url = '/secure/WorkflowUIDispatcher.jspa?id=' + issueId + '&action=' + WAIVER_ACTION_ID;
+        log('Transition URL', url);
 
         container.innerHTML =
           '<div class="status-row">' +
-          '  <span class="status-label">Project Key:</span>' +
-          '  <span>' + issue + '</span>' +
+          '  <span class="status-label">Issue:</span>' +
+          '  <span>' + issueKey + ' (ID: ' + issueId + ')</span>' +
           '</div>' +
           '<a href="' + url + '" class="waiver-btn">Waiver Request</a>';
 
+        log('Render complete');
+
       }).catch(function (err) {
-        console.error('REST API call failed:', err);
-        container.innerHTML = '<span class="loading">Error loading issue data.</span>';
+        log('REST API call FAILED', {
+          message: err.message || err,
+          error: JSON.stringify(err)
+        });
+        container.innerHTML = '<span class="loading">Error: ' + (err.message || err) + '</span>';
       });
     });
   </script>
