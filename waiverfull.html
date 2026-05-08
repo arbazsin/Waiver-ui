@@ -1,229 +1,223 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>Waiver Request</title>
-  <script src="https://assets.hydrogen.sagittarius.connect.product.adaptavist.com/public/js/bridge.js"></script>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
-      padding: 10px 12px;
-    }
-    .status-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 12px;
-    }
-    .status-label {
-      font-size: 11px;
-      color: #6B778C;
-      font-weight: 600;
-      text-transform: uppercase;
-    }
-    .waiver-btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      background-color: #0052CC;
-      color: #FFFFFF;
-      border: none;
-      border-radius: 3px;
-      padding: 8px 16px;
-      font-size: 14px;
-      font-weight: 500;
-      cursor: pointer;
-      width: 100%;
-      justify-content: center;
-      text-decoration: none;
-      transition: background-color 0.2s ease;
-    }
-    .waiver-btn:hover { background-color: #0065FF; }
-    .waiver-btn:active { background-color: #0747A6; }
-    .hidden { display: none; }
-    .loading { font-size: 12px; color: #6B778C; }
-    .debug-panel {
-      margin-top: 12px;
-      padding: 8px;
-      background: #F4F5F7;
-      border: 1px solid #DFE1E6;
-      border-radius: 3px;
-      font-size: 11px;
-      font-family: monospace;
-      color: #172B4D;
-      white-space: pre-wrap;
-      word-break: break-all;
-    }
-  </style>
-</head>
-<body>
-  <div id="container"><span class="loading">Loading...</span></div>
+<script>
+  // ============================================================
+  // CONFIGURATION
+  // ============================================================
+  var ALLOWED_PROJECT    = 'PLC';
+  var ALLOWED_ISSUE_TYPE = 'Checklist';
+  var WAIVER_ACTION_ID   = 2;
 
-  <!-- Debug panel visible directly on the page (remove after testing) -->
-  <div id="debug" class="debug-panel"></div>
+  // ============================================================
+  // UI Logger (NO console.log at all)
+  // ============================================================
+  var debugEl = document.getElementById('debug');
 
-  <script>
-    // ============================================================
-    // CONFIGURATION
-    // ============================================================
-    var ALLOWED_PROJECT    = 'PLC';
-    var ALLOWED_ISSUE_TYPE = 'Checklist';
-    var WAIVER_ACTION_ID   = 2;
+  function log(label, data, type) {
+    type = type || 'info';
 
-    // ============================================================
-    // Debug logger — writes to BOTH console AND the on-page panel
-    // so you can see output even without switching iframe context
-    // ============================================================
-    var debugEl = document.getElementById('debug');
-    function log(label, data) {
-      var msg = '[WaiverReq] ' + label;
-      if (data !== undefined) {
-        msg += ': ' + (typeof data === 'object' ? JSON.stringify(data, null, 2) : data);
+    var time = new Date().toLocaleTimeString();
+
+    var color = {
+      info: '#0747A6',
+      success: '#006644',
+      warn: '#BF2600',
+      error: '#DE350B'
+    }[type] || '#172B4D';
+
+    var entry = document.createElement('div');
+    entry.style.marginBottom = '6px';
+    entry.style.padding = '6px';
+    entry.style.borderRadius = '4px';
+    entry.style.background = '#FFFFFF';
+    entry.style.borderLeft = '4px solid ' + color;
+
+    var text = '<strong>[' + time + ']</strong> ' + label;
+
+    if (data !== undefined) {
+      text += '<br/><span style="color:#42526E;">' +
+        (typeof data === 'object'
+          ? JSON.stringify(data, null, 2)
+          : data) +
+        '</span>';
+    }
+
+    entry.innerHTML = text;
+    debugEl.appendChild(entry);
+
+    // Auto scroll
+    debugEl.scrollTop = debugEl.scrollHeight;
+  }
+
+  // ============================================================
+  // Wait for bridge
+  // ============================================================
+  function waitForBridge(callback) {
+    var attempts = 0;
+    var maxAttempts = 50;
+
+    var interval = setInterval(function () {
+      attempts++;
+
+      var issueKey = null;
+      if (window.AdaptavistBridgeContext && window.AdaptavistBridgeContext.context) {
+        issueKey = window.AdaptavistBridgeContext.context.issueKey;
       }
-      console.log(msg);
-      debugEl.textContent += msg + '\n';
-    }
 
-    // ============================================================
-    // Step 1: Check what's available immediately on page load
-    // ============================================================
-    log('Page loaded');
-    log('window.AdaptavistBridge exists', !!window.AdaptavistBridge);
-    log('window.AdaptavistBridgeContext exists', !!window.AdaptavistBridgeContext);
+      log('Polling Bridge', { attempt: attempts, issueKey: issueKey });
 
-    if (window.AdaptavistBridgeContext) {
-      log('Context object', window.AdaptavistBridgeContext.context);
-    }
+      if (issueKey) {
+        clearInterval(interval);
+        log('Bridge READY ✅', issueKey, 'success');
+        callback(issueKey);
+      } else if (attempts >= maxAttempts) {
+        clearInterval(interval);
+        log('Bridge FAILED ❌', 'Context not available', 'error');
 
-    // ============================================================
-    // Step 2: Wait for bridge context to be ready
-    // ============================================================
-    function waitForBridge(callback) {
-      var attempts = 0;
-      var maxAttempts = 50;
+        document.getElementById('container').innerHTML =
+          '<span class="loading">Unable to load issue context.</span>';
+      }
+    }, 200);
+  }
 
-      log('Starting bridge polling (max ' + maxAttempts + ' attempts, 200ms each)');
+  // ============================================================
+  // Token fetching
+  // ============================================================
+  function getAtlToken(callback) {
+    log('Fetching atl_token...');
 
-      var interval = setInterval(function () {
-        attempts++;
+    AdaptavistBridge.request({
+      url: '/rest/api/2/myself',
+      type: 'GET'
+    }).then(function () {
 
-        var hasBridge  = !!window.AdaptavistBridge;
-        var hasContext = !!window.AdaptavistBridgeContext;
-        var issueKey   = null;
+      if (window.AP && window.AP.cookie) {
+        log('Trying AP.cookie...');
 
-        if (hasContext && window.AdaptavistBridgeContext.context) {
-          issueKey = window.AdaptavistBridgeContext.context.issueKey;
-        }
-
-        // Log every 5th attempt to avoid spam, plus first and last
-        if (attempts === 1 || attempts % 5 === 0 || issueKey) {
-          log('Poll #' + attempts, {
-            bridge: hasBridge,
-            context: hasContext,
-            issueKey: issueKey || 'N/A',
-            fullContext: hasContext ? window.AdaptavistBridgeContext.context : 'N/A'
-          });
-        }
-
-        if (issueKey) {
-          clearInterval(interval);
-          log('Bridge ready after ' + attempts + ' attempts');
-          callback(issueKey);
-        } else if (attempts >= maxAttempts) {
-          clearInterval(interval);
-          log('FAILED — Bridge context never became available');
-          log('Final state', {
-            bridge: hasBridge,
-            context: hasContext,
-            contextObj: hasContext ? window.AdaptavistBridgeContext : 'undefined'
-          });
-          document.getElementById('container').innerHTML =
-            '<span class="loading">Unable to load issue context after 10s.</span>';
-        }
-      }, 200);
-    }
-
-    // ============================================================
-    // Step 3: Fetch issue data and render
-    // ============================================================
-    waitForBridge(function (issueKey) {
-      var container = document.getElementById('container');
-      var apiUrl = '/rest/api/2/issue/' + issueKey + '?fields=project,issuetype,status';
-
-      log('Calling REST API', apiUrl);
-
-      AdaptavistBridge.request({
-        url: apiUrl,
-        type: 'GET'
-      }).then(function (response) {
-        log('Raw API response type', typeof response);
-        log('Raw API response', response);
-
-        var issue;
-        try {
-          issue = typeof response === 'string' ? JSON.parse(response) : response;
-        } catch (e) {
-          log('JSON parse FAILED', e.message);
-          container.innerHTML = '<span class="loading">Failed to parse API response.</span>';
-          return;
-        }
-
-        var projectKey = issue.fields.project.key;
-        var issueType  = issue.fields.issuetype.name;
-        var statusName = issue.fields.status.name;
-        var issueId    = issue.id;
-
-        log('Parsed issue data', {
-          projectKey: projectKey,
-          issueType: issueType,
-          status: statusName,
-          issueId: issueId,
-          issueKey: issueKey
+        AP.cookie.read('atlassian.xsrf.token', function (token) {
+          if (token) {
+            log('Token from cookie ✅', token, 'success');
+            callback(token);
+          } else {
+            log('Cookie EMPTY ⚠️', 'Trying scrape...', 'warn');
+            scrapeToken(callback);
+          }
         });
 
-        // Condition check
-        var projectMatch = (projectKey === ALLOWED_PROJECT);
-        var typeMatch    = (issueType === ALLOWED_ISSUE_TYPE);
+      } else {
+        log('AP.cookie NOT available ⚠️', 'Fallback scrape', 'warn');
+        scrapeToken(callback);
+      }
 
-        log('Condition check', {
-          projectKey: projectKey,
-          allowedProject: ALLOWED_PROJECT,
-          projectMatch: projectMatch,
-          issueType: issueType,
-          allowedIssueType: ALLOWED_ISSUE_TYPE,
-          typeMatch: typeMatch,
-          finalResult: projectMatch && typeMatch
-        });
+    }).catch(function (err) {
+      log('Token fetch failed ⚠️', err, 'warn');
+      scrapeToken(callback);
+    });
+  }
 
-        if (!projectMatch || !typeMatch) {
-          log('Condition NOT met — hiding panel');
-          container.classList.add('hidden');
-          return;
+  function scrapeToken(callback) {
+    log('Scraping token from HTML...');
+
+    AdaptavistBridge.request({
+      url: '/secure/Dashboard.jspa',
+      type: 'GET',
+      dataType: 'html'
+    }).then(function (html) {
+
+      var htmlStr = typeof html === 'string' ? html : '';
+
+      log('HTML fetched', { length: htmlStr.length });
+
+      var match =
+        htmlStr.match(/atl_token=([a-z0-9_]+)/i) ||
+        htmlStr.match(/name="atlassian-token"\s+content="([^"]+)"/);
+
+      if (match) {
+        log('Token scraped ✅', match[1], 'success');
+        callback(match[1]);
+      } else {
+        log('Token NOT found ❌', 'Proceeding without token', 'warn');
+        callback(null);
+      }
+
+    }).catch(function (err) {
+      log('Scrape failed ❌', err, 'error');
+      callback(null);
+    });
+  }
+
+  // ============================================================
+  // MAIN FLOW
+  // ============================================================
+  waitForBridge(function (issueKey) {
+
+    var container = document.getElementById('container');
+
+    log('Fetching issue data...', issueKey);
+
+    AdaptavistBridge.request({
+      url: '/rest/api/2/issue/' + issueKey + '?fields=project,issuetype,status',
+      type: 'GET'
+    }).then(function (response) {
+
+      var issue = typeof response === 'string' ? JSON.parse(response) : response;
+
+      var projectKey = issue.fields.project.key;
+      var issueType  = issue.fields.issuetype.name;
+      var status     = issue.fields.status.name;
+      var fullKey    = issue.key;
+      var baseUrl    = issue.self.split('/rest/')[0];
+
+      log('Issue parsed ✅', {
+        key: fullKey,
+        project: projectKey,
+        type: issueType,
+        status: status,
+        baseUrl: baseUrl
+      }, 'success');
+
+      // Condition check
+      if (projectKey !== ALLOWED_PROJECT || issueType !== ALLOWED_ISSUE_TYPE) {
+        log('Conditions NOT met ❌', {
+          expectedProject: ALLOWED_PROJECT,
+          actualProject: projectKey,
+          expectedType: ALLOWED_ISSUE_TYPE,
+          actualType: issueType
+        }, 'warn');
+
+        container.classList.add('hidden');
+        return;
+      }
+
+      log('Conditions PASSED ✅', null, 'success');
+
+      getAtlToken(function (atlToken) {
+
+        var url = baseUrl + '/secure/WorkflowUIDispatcher.jspa'
+          + '?key=' + encodeURIComponent(fullKey)
+          + '&action=' + WAIVER_ACTION_ID;
+
+        if (atlToken) {
+          url += '&atl_token=' + encodeURIComponent(atlToken);
         }
 
-        log('Condition MET — rendering button');
+        url += '&returnUrl=&inline=true&decorator=dialog&_=' + Date.now();
 
-        var url = '/secure/WorkflowUIDispatcher.jspa?id=' + issueId + '&action=' + WAIVER_ACTION_ID;
-        log('Transition URL', url);
+        log('Final URL ✅', url, 'success');
 
         container.innerHTML =
           '<div class="status-row">' +
-          '  <span class="status-label">Issue:</span>' +
-          '  <span>' + issueKey + ' (ID: ' + issueId + ')</span>' +
+          '<span class="status-label">Issue:</span>' +
+          '<span>' + fullKey + '</span>' +
           '</div>' +
-          '<a href="' + url + '" class="waiver-btn">Waiver Request</a>';
+          '<a href="' + url + '" target="_top" class="waiver-btn">Waiver Request</a>';
 
-        log('Render complete');
-
-      }).catch(function (err) {
-        log('REST API call FAILED', {
-          message: err.message || err,
-          error: JSON.stringify(err)
-        });
-        container.innerHTML = '<span class="loading">Error: ' + (err.message || err) + '</span>';
+        log('UI rendered ✅', null, 'success');
       });
+
+    }).catch(function (err) {
+      log('Issue fetch FAILED ❌', err, 'error');
+
+      container.innerHTML =
+        '<span class="loading">Error: ' + (err.message || err) + '</span>';
     });
-  </script>
-</body>
-</html>
+  });
+</script>
