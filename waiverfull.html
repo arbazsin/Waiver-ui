@@ -6,19 +6,16 @@
   <script src="https://assets.hydrogen.sagittarius.connect.product.adaptavist.com/public/js/bridge.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
       padding: 10px 12px;
     }
-
     .status-row {
       display: flex;
       align-items: center;
       gap: 8px;
       margin-bottom: 12px;
     }
-
     .status-label {
       font-size: 11px;
       color: #6B778C;
@@ -42,32 +39,59 @@
       text-decoration: none;
       transition: background-color 0.2s ease;
     }
-
     .waiver-btn:hover { background-color: #0065FF; }
     .waiver-btn:active { background-color: #0747A6; }
-
     .hidden { display: none; }
+    .loading { font-size: 12px; color: #6B778C; }
   </style>
 </head>
 <body>
-
-  <div id="container"></div>
-
+  <div id="container"><span class="loading">Loading...</span></div>
   <script>
     // ============================================================
     // CONFIGURATION
     // ============================================================
     var ALLOWED_PROJECT    = 'PLC';
     var ALLOWED_ISSUE_TYPE = 'Checklist';
-    var WAIVER_ACTION_ID   = 2;   // Waiver Request transition ID on Cloud
+    var WAIVER_ACTION_ID   = 2;
 
     // ============================================================
+    // Wait for Adaptavist Bridge to be ready before doing anything
+    // ============================================================
+    function waitForBridge(callback) {
+      var attempts = 0;
+      var maxAttempts = 50;  // 50 x 200ms = 10 seconds max wait
+      var interval = setInterval(function () {
+        attempts++;
+        console.log('Bridge check attempt ' + attempts,
+          'Bridge:', !!window.AdaptavistBridge,
+          'Context:', !!window.AdaptavistBridgeContext,
+          'IssueKey:', window.AdaptavistBridgeContext && window.AdaptavistBridgeContext.context
+            ? window.AdaptavistBridgeContext.context.issueKey
+            : 'N/A'
+        );
 
-    (function () {
+        if (window.AdaptavistBridgeContext
+            && window.AdaptavistBridgeContext.context
+            && window.AdaptavistBridgeContext.context.issueKey) {
+          clearInterval(interval);
+          callback(window.AdaptavistBridgeContext.context.issueKey);
+        } else if (attempts >= maxAttempts) {
+          clearInterval(interval);
+          console.error('Adaptavist Bridge context never became available after ' + maxAttempts + ' attempts');
+          document.getElementById('container').innerHTML =
+            '<span class="loading">Unable to load issue context.</span>';
+        }
+      }, 200);
+    }
+
+    // ============================================================
+    // Main logic — only runs once bridge is ready
+    // ============================================================
+    waitForBridge(function (issueKey) {
       var container = document.getElementById('container');
-      var issueKey  = AdaptavistBridgeContext.context.issueKey;
 
-      if (!issueKey) { container.classList.add('hidden'); return; }
+      console.log('Bridge ready. Issue key:', issueKey);
 
       AdaptavistBridge.request({
         url: '/rest/api/2/issue/' + issueKey + '?fields=project,issuetype,status',
@@ -77,11 +101,12 @@
         var projectKey = issue.fields.project.key;
         var issueType  = issue.fields.issuetype.name;
         var issueId    = issue.id;
-         console.log(projectKey);
-         console.log(issueType);
-         console.log(issueId);
+
+        console.log('Project:', projectKey, 'IssueType:', issueType, 'ID:', issueId);
+
         // Condition: PLC project + Checklist issue type only
         if (projectKey !== ALLOWED_PROJECT || issueType !== ALLOWED_ISSUE_TYPE) {
+          console.log('Condition not met — hiding panel');
           container.classList.add('hidden');
           return;
         }
@@ -90,17 +115,16 @@
 
         container.innerHTML =
           '<div class="status-row">' +
-          '  <span class="status-label">Status:</span>' +
+          '  <span class="status-label">Issue ID:</span>' +
           '  <span>' + issueId + '</span>' +
           '</div>' +
           '<a href="' + url + '" class="waiver-btn">Waiver Request</a>';
 
       }).catch(function (err) {
-        console.error('Waiver Request fragment error:', err);
-        container.classList.add('hidden');
+        console.error('REST API call failed:', err);
+        container.innerHTML = '<span class="loading">Error loading issue data.</span>';
       });
-    })();
+    });
   </script>
-
 </body>
 </html>
