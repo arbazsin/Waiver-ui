@@ -87,7 +87,9 @@
         var projectKey = issue.fields.project.key;
         var issueType  = issue.fields.issuetype.name;
         var issueId    = issue.id;
-
+         console.log(projectKey);
+         console.log(issueType);
+         console.log(issueId);
         // Condition: PLC project + Checklist issue type only
         if (projectKey !== ALLOWED_PROJECT || issueType !== ALLOWED_ISSUE_TYPE) {
           container.classList.add('hidden');
