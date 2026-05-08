@@ -10,324 +10,198 @@
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
       padding: 10px 12px;
     }
-    .status-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 12px;
-    }
-    .status-label {
-      font-size: 11px;
-      color: #6B778C;
-      font-weight: 600;
-      text-transform: uppercase;
-    }
+    .status-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+    .status-label { font-size: 11px; color: #6B778C; font-weight: 600; text-transform: uppercase; }
     .waiver-btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      background-color: #0052CC;
-      color: #FFFFFF;
-      border: none;
-      border-radius: 3px;
-      padding: 8px 16px;
-      font-size: 14px;
-      font-weight: 500;
-      cursor: pointer;
-      width: 100%;
-      justify-content: center;
-      text-decoration: none;
+      display: inline-flex; align-items: center; gap: 6px;
+      background-color: #0052CC; color: #FFFFFF; border: none; border-radius: 3px;
+      padding: 8px 16px; font-size: 14px; font-weight: 500; cursor: pointer;
+      width: 100%; justify-content: center; text-decoration: none;
       transition: background-color 0.2s ease;
     }
     .waiver-btn:hover { background-color: #0065FF; }
     .waiver-btn:active { background-color: #0747A6; }
     .hidden { display: none; }
     .loading { font-size: 12px; color: #6B778C; }
-    .debug-panel {
-      margin-top: 12px;
-      padding: 8px;
-      background: #F4F5F7;
-      border: 1px solid #DFE1E6;
-      border-radius: 3px;
-      font-size: 11px;
-      font-family: monospace;
-      color: #172B4D;
-      white-space: pre-wrap;
-      word-break: break-all;
-      max-height: 300px;
-      overflow-y: auto;
+    #debug {
+      margin-top: 12px; padding: 8px; background: #F4F5F7; border: 1px solid #DFE1E6;
+      border-radius: 3px; font-size: 11px; font-family: monospace; color: #172B4D;
+      white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto;
     }
   </style>
 </head>
 <body>
   <div id="container"><span class="loading">Loading...</span></div>
-  <div id="debug" class="debug-panel"></div>
+  <div id="debug"></div>
 
   <script>
     // ============================================================
-    // CONFIGURATION
+    // CONFIG
     // ============================================================
     var ALLOWED_PROJECT    = 'PLC';
     var ALLOWED_ISSUE_TYPE = 'Checklist';
     var WAIVER_ACTION_ID   = 2;
 
     // ============================================================
-    // Debug logger
+    // Logger
     // ============================================================
-    var debugEl = document.getElementById('debug');
-    function log(label, data) {
-      var msg = '[WaiverReq] ' + label;
-      if (data !== undefined) {
-        msg += ': ' + (typeof data === 'object' ? JSON.stringify(data, null, 2) : data);
-      }
-      console.log(msg);
-      debugEl.textContent += msg + '\n';
-      debugEl.scrollTop = debugEl.scrollHeight;
+    function log(msg, data) {
+      var line = '[WR] ' + msg;
+      if (data !== undefined) line += ': ' + (typeof data === 'object' ? JSON.stringify(data) : data);
+      console.log(line);
+      var d = document.getElementById('debug');
+      d.textContent += line + '\n';
+      d.scrollTop = d.scrollHeight;
     }
 
     // ============================================================
     // Wait for bridge
     // ============================================================
-    function waitForBridge(callback) {
-      var attempts = 0;
-      var maxAttempts = 50;
-      var interval = setInterval(function () {
-        attempts++;
-        var issueKey = null;
-        if (window.AdaptavistBridgeContext && window.AdaptavistBridgeContext.context) {
-          issueKey = window.AdaptavistBridgeContext.context.issueKey;
-        }
-        if (attempts === 1 || attempts % 5 === 0 || issueKey) {
-          log('Poll #' + attempts, { issueKey: issueKey || 'N/A' });
-        }
-        if (issueKey) {
-          clearInterval(interval);
-          callback(issueKey);
-        } else if (attempts >= maxAttempts) {
-          clearInterval(interval);
-          log('FAILED — Bridge never ready');
-          document.getElementById('container').innerHTML =
-            '<span class="loading">Unable to load issue context.</span>';
+    function waitForBridge(cb) {
+      var n = 0;
+      var iv = setInterval(function () {
+        n++;
+        var k = null;
+        if (window.AdaptavistBridgeContext && AdaptavistBridgeContext.context)
+          k = AdaptavistBridgeContext.context.issueKey;
+        if (k) { clearInterval(iv); cb(k); }
+        else if (n >= 50) {
+          clearInterval(iv);
+          log('Bridge never ready after 10s');
+          document.getElementById('container').innerHTML = '<span class="loading">Bridge timeout.</span>';
         }
       }, 200);
     }
 
     // ============================================================
-    // atl_token extraction — tries EVERY possible method
+    // Get atl_token — ONE focused approach
+    // Fetch the issue's own transition page via AP.request
+    // The response HTML contains the token in a meta tag or form
     // ============================================================
-    function getAtlToken(fullIssueKey, callback) {
-      log('=== Starting atl_token hunt ===');
+    function getAtlToken(fullIssueKey, cb) {
+      log('Fetching atl_token...');
 
-      // We try methods in sequence. First success wins.
-      tryMethod1_APCookie(function (token) {
-        if (token) return callback(token);
-        tryMethod2_APRequestPage(function (token) {
-          if (token) return callback(token);
-          tryMethod3_APRequestTransitionPage(fullIssueKey, function (token) {
-            if (token) return callback(token);
-            tryMethod4_DirectAPRequest(function (token) {
-              if (token) return callback(token);
-              tryMethod5_DocumentCookie(function (token) {
-                if (token) return callback(token);
-                tryMethod6_APContext(function (token) {
-                  callback(token); // null if all failed
-                });
-              });
-            });
-          });
+      // Check what's available
+      log('window.AP exists', !!window.AP);
+      log('AP.request exists', !!(window.AP && AP.request));
+      log('AP.cookie exists', !!(window.AP && AP.cookie));
+
+      // Step A: Try AP.cookie first (fastest if it works)
+      if (window.AP && AP.cookie && AP.cookie.read) {
+        AP.cookie.read('atlassian.xsrf.token', function (val) {
+          log('AP.cookie result', val || 'empty');
+          if (val) { cb(val); return; }
+          // Cookie didn't work — fall through to page fetch
+          fetchTokenFromPage(fullIssueKey, cb);
         });
+      } else {
+        fetchTokenFromPage(fullIssueKey, cb);
+      }
+    }
+
+    function fetchTokenFromPage(fullIssueKey, cb) {
+      // Step B: Fetch any Jira page that contains the atl_token
+      // Using AP.request directly (NOT AdaptavistBridge) to get raw HTML
+
+      var pages = [
+        '/secure/MyJiraHome.jspa',
+        '/secure/ViewProfile.jspa',
+        '/secure/BrowseProjects.jspa',
+        '/secure/Dashboard.jspa'
+      ];
+
+      tryNextPage(pages, 0, cb);
+    }
+
+    function tryNextPage(pages, index, cb) {
+      if (index >= pages.length) {
+        log('All page fetches exhausted — no token found');
+        // Last resort: try AdaptavistBridge
+        tryBridgeRequest(cb);
+        return;
+      }
+
+      var pageUrl = pages[index];
+      log('Trying page: ' + pageUrl);
+
+      try {
+        // Use AP.request directly
+        if (window.AP && AP.request) {
+          AP.request({
+            url: pageUrl,
+            type: 'GET',
+            success: function (body) {
+              log('Got response from ' + pageUrl + ', length=' + (body ? body.length : 0));
+
+              if (body && body.length > 0) {
+                // Log first 500 chars so we can see what we got
+                log('Response preview', body.substring(0, 500));
+
+                var token = scrapeToken(body);
+                if (token) {
+                  log('TOKEN FOUND from ' + pageUrl, token);
+                  cb(token);
+                  return;
+                }
+              }
+              // Try next page
+              tryNextPage(pages, index + 1, cb);
+            },
+            error: function (xhr) {
+              log(pageUrl + ' failed', {
+                status: xhr.status,
+                statusText: xhr.statusText,
+                response: xhr.responseText ? xhr.responseText.substring(0, 200) : 'empty'
+              });
+              tryNextPage(pages, index + 1, cb);
+            }
+          });
+        } else {
+          log('AP.request not available — skipping page fetch');
+          tryBridgeRequest(cb);
+        }
+      } catch (e) {
+        log('Exception on ' + pageUrl, e.message);
+        tryNextPage(pages, index + 1, cb);
+      }
+    }
+
+    function tryBridgeRequest(cb) {
+      log('Trying AdaptavistBridge.request as fallback');
+      AdaptavistBridge.request({
+        url: '/secure/MyJiraHome.jspa',
+        type: 'GET'
+      }).then(function (resp) {
+        var text = typeof resp === 'string' ? resp : JSON.stringify(resp);
+        log('Bridge response length', text.length);
+        log('Bridge response preview', text.substring(0, 500));
+        var token = scrapeToken(text);
+        if (token) { log('TOKEN FOUND via bridge', token); cb(token); }
+        else { log('No token in bridge response either'); cb(null); }
+      }).catch(function (err) {
+        log('Bridge fallback failed', err);
+        cb(null);
       });
     }
 
-    // Method 1: AP.cookie.read
-    function tryMethod1_APCookie(callback) {
-      log('Method 1: AP.cookie.read("atlassian.xsrf.token")');
-      try {
-        if (window.AP && AP.cookie && AP.cookie.read) {
-          AP.cookie.read('atlassian.xsrf.token', function (value) {
-            log('Method 1 result', value || 'empty');
-            callback(value || null);
-          });
-        } else {
-          log('Method 1: AP.cookie not available');
-          callback(null);
-        }
-      } catch (e) {
-        log('Method 1 error', e.message);
-        callback(null);
-      }
-    }
-
-    // Method 2: AP.request to fetch a simple Jira page and scrape the token
-    function tryMethod2_APRequestPage(callback) {
-      log('Method 2: AP.request /secure/BrowseProjects.jspa');
-      try {
-        if (!window.AP || !AP.request) {
-          log('Method 2: AP.request not available');
-          callback(null);
-          return;
-        }
-        AP.request({
-          url: '/secure/BrowseProjects.jspa',
-          type: 'GET',
-          success: function (responseText) {
-            log('Method 2: Got response, length=' + responseText.length);
-            var token = extractTokenFromHtml(responseText, 'Method 2');
-            callback(token);
-          },
-          error: function (xhr, statusText, errorThrown) {
-            log('Method 2 error', { status: statusText, error: errorThrown });
-            callback(null);
-          }
-        });
-      } catch (e) {
-        log('Method 2 exception', e.message);
-        callback(null);
-      }
-    }
-
-    // Method 3: AP.request to fetch the transition page itself
-    function tryMethod3_APRequestTransitionPage(fullIssueKey, callback) {
-      log('Method 3: AP.request WorkflowUIDispatcher for ' + fullIssueKey);
-      try {
-        if (!window.AP || !AP.request) {
-          log('Method 3: AP.request not available');
-          callback(null);
-          return;
-        }
-        AP.request({
-          url: '/secure/WorkflowUIDispatcher.jspa?key=' + fullIssueKey + '&action=' + WAIVER_ACTION_ID,
-          type: 'GET',
-          success: function (responseText) {
-            log('Method 3: Got response, length=' + responseText.length);
-            var token = extractTokenFromHtml(responseText, 'Method 3');
-            callback(token);
-          },
-          error: function (xhr, statusText, errorThrown) {
-            log('Method 3 error', { status: statusText, error: errorThrown });
-            callback(null);
-          }
-        });
-      } catch (e) {
-        log('Method 3 exception', e.message);
-        callback(null);
-      }
-    }
-
-    // Method 4: AdaptavistBridge.request to fetch a page
-    function tryMethod4_DirectAPRequest(callback) {
-      log('Method 4: AdaptavistBridge.request /secure/ViewProfile.jspa');
-      try {
-        AdaptavistBridge.request({
-          url: '/secure/ViewProfile.jspa',
-          type: 'GET'
-        }).then(function (response) {
-          var text = typeof response === 'string' ? response : JSON.stringify(response);
-          log('Method 4: Got response, length=' + text.length);
-          var token = extractTokenFromHtml(text, 'Method 4');
-          callback(token);
-        }).catch(function (err) {
-          log('Method 4 error', err);
-          callback(null);
-        });
-      } catch (e) {
-        log('Method 4 exception', e.message);
-        callback(null);
-      }
-    }
-
-    // Method 5: Read document.cookie directly
-    function tryMethod5_DocumentCookie(callback) {
-      log('Method 5: document.cookie');
-      try {
-        var cookies = document.cookie;
-        log('Method 5 cookies', cookies || 'empty');
-
-        var match = cookies.match(/atlassian\.xsrf\.token=([^;]+)/);
-        if (match) {
-          log('Method 5: Found token in cookie', match[1]);
-          callback(match[1]);
-        } else {
-          // Also try parent cookies via AP
-          log('Method 5: No token in iframe cookies');
-          callback(null);
-        }
-      } catch (e) {
-        log('Method 5 error', e.message);
-        callback(null);
-      }
-    }
-
-    // Method 6: Check AP._data or AP context for token
-    function tryMethod6_APContext(callback) {
-      log('Method 6: Checking AP internals');
-      try {
-        if (window.AP) {
-          // Log everything available on AP for debugging
-          var apKeys = Object.keys(AP);
-          log('Method 6: AP keys', apKeys);
-
-          if (AP._data) {
-            log('Method 6: AP._data', JSON.stringify(AP._data).substring(0, 500));
-          }
-          if (AP.context) {
-            AP.context.getContext(function (ctx) {
-              log('Method 6: AP.context', ctx);
-            });
-          }
-          if (AP.getLocation) {
-            AP.getLocation(function (loc) {
-              log('Method 6: AP.getLocation', loc);
-            });
-          }
-        }
-        // Give async methods a moment
-        setTimeout(function () { callback(null); }, 1000);
-      } catch (e) {
-        log('Method 6 error', e.message);
-        callback(null);
-      }
-    }
-
     // ============================================================
-    // Token extraction from HTML — tries multiple patterns
+    // Scrape token from HTML string
     // ============================================================
-    function extractTokenFromHtml(html, methodName) {
-      if (!html || html.length < 50) {
-        log(methodName + ': Response too short to contain token');
-        return null;
-      }
-
-      // Log a snippet for debugging
-      log(methodName + ': First 300 chars', html.substring(0, 300));
-
+    function scrapeToken(html) {
       var patterns = [
-        // <meta id="atlassian-token" name="atlassian-token" content="XXXX">
-        /name="atlassian-token"\s+content="([^"]+)"/,
-        /content="([^"]+)"\s+name="atlassian-token"/,
-        /id="atlassian-token"[^>]+content="([^"]+)"/,
-
-        // <input type="hidden" name="atl_token" value="XXXX">
-        /name="atl_token"\s+value="([^"]+)"/,
-        /name='atl_token'\s+value='([^']+)'/,
-
-        // atl_token=XXXX in URLs or JS
-        /atl_token=([a-f0-9]+_lin)/,
-        /atl_token['":\s]+([a-f0-9_]+_lin)/,
-
-        // Any 40-char hex followed by _lin (XSRF token format)
+        /name="atlassian-token"\s+content="([^"]+)"/i,
+        /content="([^"]+)"\s+name="atlassian-token"/i,
+        /id="atlassian-token"[^>]+content="([^"]+)"/i,
+        /name="atl_token"\s+value="([^"]+)"/i,
+        /name='atl_token'\s+value='([^']+)'/i,
+        /atl_token=([a-f0-9]+_lin)/i,
+        /["']atl_token["']\s*:\s*["']([^"']+)["']/i,
         /([a-f0-9]{30,}_lin)/
       ];
-
       for (var i = 0; i < patterns.length; i++) {
-        var match = html.match(patterns[i]);
-        if (match && match[1]) {
-          log(methodName + ': FOUND token with pattern #' + (i + 1), match[1]);
-          return match[1];
-        }
+        var m = html.match(patterns[i]);
+        if (m && m[1]) return m[1];
       }
-
-      log(methodName + ': No token found in response');
       return null;
     }
 
@@ -346,26 +220,20 @@
 
         var projectKey   = issue.fields.project.key;
         var issueType    = issue.fields.issuetype.name;
-        var statusName   = issue.fields.status.name;
         var fullIssueKey = issue.key;
         var baseUrl      = issue.self.split('/rest/')[0];
 
-        log('Parsed', { fullIssueKey: fullIssueKey, projectKey: projectKey, issueType: issueType, baseUrl: baseUrl });
+        log('Issue', { fullIssueKey: fullIssueKey, project: projectKey, type: issueType, base: baseUrl });
 
         if (projectKey !== ALLOWED_PROJECT || issueType !== ALLOWED_ISSUE_TYPE) {
-          log('Condition NOT met — hiding');
           container.classList.add('hidden');
           return;
         }
 
-        log('Condition MET — hunting for atl_token');
-
-        // Get the token, then render
         getAtlToken(fullIssueKey, function (atlToken) {
-          log('=== Token hunt complete ===');
-          log('atl_token', atlToken || 'NOT FOUND');
+          log('=== RESULT ===');
+          log('atl_token', atlToken || 'NOT FOUND — check debug above');
 
-          // Build the URL
           var url = baseUrl + '/secure/WorkflowUIDispatcher.jspa'
             + '?key=' + encodeURIComponent(fullIssueKey)
             + '&action=' + WAIVER_ACTION_ID;
@@ -374,34 +242,26 @@
             url += '&atl_token=' + encodeURIComponent(atlToken);
           }
 
-          url += '&returnUrl='
-            + '&inline=true'
-            + '&decorator=dialog'
-            + '&_=' + Date.now();
+          url += '&returnUrl=&inline=true&decorator=dialog&_=' + Date.now();
 
-          log('Final URL', url);
+          log('URL', url);
 
           container.innerHTML =
             '<div class="status-row">' +
             '  <span class="status-label">Issue:</span>' +
             '  <span>' + fullIssueKey + '</span>' +
             '</div>' +
-            '<a href="' + url + '" target="_top" class="waiver-btn">' +
-            '  Waiver Request' +
-            '</a>';
+            '<a href="' + url + '" target="_top" class="waiver-btn">Waiver Request</a>';
 
           if (!atlToken) {
             container.innerHTML +=
               '<div style="margin-top:8px;font-size:11px;color:#BF2600;background:#FFEBE6;padding:6px 8px;border-radius:3px;">' +
-              '⚠ atl_token not found. Click may fail with XSRF error. Check debug panel for details.' +
-              '</div>';
+              'Token not found. Check debug panel — share the output and we will fix it.</div>';
           }
-
-          log('Render complete');
         });
 
       }).catch(function (err) {
-        log('REST API FAILED', err);
+        log('Issue fetch failed', err);
         container.innerHTML = '<span class="loading">Error: ' + (err.message || err) + '</span>';
       });
     });
