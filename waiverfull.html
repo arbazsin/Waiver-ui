@@ -110,11 +110,77 @@
     }
 
     // ============================================================
+    // Get atl_token (XSRF token)
+    // Tries multiple methods since Cloud access varies
+    // ============================================================
+    function getAtlToken(callback) {
+      log('Fetching atl_token...');
+
+      // Method 1: Try fetching any Jira page and extracting token from meta tag
+      AdaptavistBridge.request({
+        url: '/rest/api/2/myself',
+        type: 'GET'
+      }).then(function (response) {
+        // The token might be in the AP context
+        // Try reading it from AP cookie
+        if (window.AP && window.AP.cookie) {
+          AP.cookie.read('atlassian.xsrf.token', function (token) {
+            if (token) {
+              log('Got atl_token from AP cookie', token);
+              callback(token);
+            } else {
+              log('AP cookie empty — trying HTML scrape');
+              scrapeTokenFromPage(callback);
+            }
+          });
+        } else {
+          log('AP.cookie not available — trying HTML scrape');
+          scrapeTokenFromPage(callback);
+        }
+      }).catch(function (err) {
+        log('myself endpoint failed', err);
+        scrapeTokenFromPage(callback);
+      });
+    }
+
+    function scrapeTokenFromPage(callback) {
+      // Method 2: Fetch the issue page HTML and extract atl_token from it
+      AdaptavistBridge.request({
+        url: '/secure/Dashboard.jspa',
+        type: 'GET',
+        dataType: 'html'
+      }).then(function (html) {
+        var htmlStr = typeof html === 'string' ? html : '';
+        log('Dashboard HTML length', htmlStr.length);
+
+        // Look for atl_token in the HTML
+        // Pattern: atl_token=XXXXX or name="atl_token" content="XXXXX"
+        var tokenMatch = htmlStr.match(/atl_token=([a-f0-9]+_lin)/);
+        if (!tokenMatch) {
+          tokenMatch = htmlStr.match(/name="atlassian-token"\s+content="([^"]+)"/);
+        }
+        if (!tokenMatch) {
+          tokenMatch = htmlStr.match(/atl_token['":\s]+([a-f0-9_]+lin)/);
+        }
+
+        if (tokenMatch && tokenMatch[1]) {
+          log('Got atl_token from page scrape', tokenMatch[1]);
+          callback(tokenMatch[1]);
+        } else {
+          log('Could not extract atl_token — will try without it');
+          callback(null);
+        }
+      }).catch(function (err) {
+        log('Page scrape failed', err);
+        callback(null);
+      });
+    }
+
+    // ============================================================
     // Main
     // ============================================================
     waitForBridge(function (issueKey) {
       var container = document.getElementById('container');
-
       log('Bridge ready', issueKey);
 
       // Step 1: Fetch issue data
@@ -124,19 +190,14 @@
       }).then(function (response) {
         var issue = typeof response === 'string' ? JSON.parse(response) : response;
 
-        var projectKey  = issue.fields.project.key;
-        var issueType   = issue.fields.issuetype.name;
-        var statusName  = issue.fields.status.name;
-        var fullIssueKey = issue.key;       // "PLC-18723"
-        var issueId     = issue.id;         // numeric
-
-        // Extract Jira base URL from the self link
-        // issue.self = "https://your-instance.atlassian.net/rest/api/2/issue/278481"
-        var baseUrl = issue.self.split('/rest/')[0];
+        var projectKey   = issue.fields.project.key;
+        var issueType    = issue.fields.issuetype.name;
+        var statusName   = issue.fields.status.name;
+        var fullIssueKey = issue.key;
+        var baseUrl      = issue.self.split('/rest/')[0];
 
         log('Parsed', {
           fullIssueKey: fullIssueKey,
-          issueId: issueId,
           projectKey: projectKey,
           issueType: issueType,
           status: statusName,
@@ -150,28 +211,27 @@
           return;
         }
 
-        log('Condition MET — fetching atl_token');
+        log('Condition MET');
 
-        // Step 2: Fetch atl_token (XSRF token) from Jira session
-        AdaptavistBridge.request({
-          url: '/rest/atlassian-connect/1/addons-admin',
-          type: 'GET'
-        }).then(function () {
-          // If that doesn't give us the token, we try the session endpoint
-          return AdaptavistBridge.request({
-            url: '/rest/auth/1/session',
-            type: 'GET'
-          });
-        }).then(function (sessionResponse) {
-          log('Session response', sessionResponse);
-        }).catch(function () {
-          log('Session endpoint not available — trying without token or alternate method');
-        }).finally(function () {
-          // Build the URL — try with and without atl_token
-          // On Cloud, the user's browser session may handle XSRF via cookies
-          var url = baseUrl + '/secure/WorkflowUIDispatcher.jspa?id=' + fullIssueKey + '&action=' + WAIVER_ACTION_ID;
+        // Step 2: Get atl_token, then render
+        getAtlToken(function (atlToken) {
 
-          log('Final transition URL', url);
+          // Build the full URL matching the exact format:
+          // /secure/WorkflowUIDispatcher.jspa?key=PLC-18723&action=2&atl_token=XXX&returnUrl=&inline=true&decorator=dialog&_=timestamp
+          var url = baseUrl + '/secure/WorkflowUIDispatcher.jspa'
+            + '?key=' + encodeURIComponent(fullIssueKey)
+            + '&action=' + WAIVER_ACTION_ID;
+
+          if (atlToken) {
+            url += '&atl_token=' + encodeURIComponent(atlToken);
+          }
+
+          url += '&returnUrl='
+            + '&inline=true'
+            + '&decorator=dialog'
+            + '&_=' + Date.now();
+
+          log('Final URL', url);
 
           container.innerHTML =
             '<div class="status-row">' +
