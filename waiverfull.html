@@ -86,7 +86,6 @@
         var issue      = typeof response === 'string' ? JSON.parse(response) : response;
         var projectKey = issue.fields.project.key;
         var issueType  = issue.fields.issuetype.name;
-        var statusName = issue.fields.status.name;
         var issueId    = issue.id;
 
         // Condition: PLC project + Checklist issue type only
