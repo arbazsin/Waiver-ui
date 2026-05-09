@@ -16,26 +16,32 @@
       display: inline-flex; align-items: center; gap: 6px;
       background-color: #0052CC; color: #FFFFFF; border: none; border-radius: 3px;
       padding: 8px 16px; font-size: 14px; font-weight: 500; cursor: pointer;
-      width: 100%; justify-content: center; text-decoration: none;
+      width: 100%; justify-content: center;
       transition: background-color 0.2s ease;
     }
-    .waiver-btn:hover { background-color: #0065FF; }
-    .waiver-btn:active { background-color: #0747A6; }
+    .waiver-btn:hover:not(:disabled) { background-color: #0065FF; }
+    .waiver-btn:active:not(:disabled) { background-color: #0747A6; }
+    .waiver-btn:disabled { background-color: #A5ADBA; cursor: not-allowed; }
     .hidden { display: none; }
-    .loading { font-size: 12px; color: #6B778C; }
+    .msg { font-size: 12px; margin-top: 8px; }
+    .msg.loading { color: #6B778C; }
+    .msg.success { color: #006644; }
+    .msg.error   { color: #DE350B; }
   </style>
 </head>
 <body>
-  <div id="container"><span class="loading">Loading...</span></div>
+  <div id="container"><span class="msg loading">Loading...</span></div>
 
   <script>
     var ALLOWED_PROJECT    = 'PLC';
     var ALLOWED_ISSUE_TYPE = 'Checklist';
     var WAIVER_ACTION_ID   = 2;
 
-    function getAtlToken() {
-      var match = document.cookie.match(/atlassian\.xsrf\.token=([^;]+)/);
-      return match ? match[1] : null;
+    function setMessage(cls, text) {
+      var msg = document.getElementById('msg');
+      if (!msg) return;
+      msg.className = 'msg ' + cls;
+      msg.textContent = text;
     }
 
     function waitForBridge(cb) {
@@ -43,57 +49,89 @@
       var iv = setInterval(function () {
         n++;
         var k = null;
-        if (window.AdaptavistBridgeContext && AdaptavistBridgeContext.context)
+        if (window.AdaptavistBridgeContext && AdaptavistBridgeContext.context) {
           k = AdaptavistBridgeContext.context.issueKey;
+        }
         if (k) { clearInterval(iv); cb(k); }
         else if (n >= 50) {
           clearInterval(iv);
-          document.getElementById('container').innerHTML = '<span class="loading">Bridge timeout.</span>';
+          document.getElementById('container').innerHTML =
+            '<span class="msg error">Bridge timeout.</span>';
         }
       }, 200);
+    }
+
+    function doTransition(issueKey, btn) {
+      btn.disabled = true;
+      setMessage('loading', 'Submitting waiver request...');
+
+      AdaptavistBridge.request({
+        url: '/rest/api/2/issue/' + encodeURIComponent(issueKey) + '/transitions',
+        type: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({
+          transition: { id: String(WAIVER_ACTION_ID) }
+          // If your transition screen has required fields, add them here, e.g.:
+          // , update: { comment: [{ add: { body: 'Waiver requested via panel' } }] }
+          // , fields: { resolution: { name: 'Done' } }
+        })
+      }).then(function () {
+        setMessage('success', 'Waiver request submitted ✓');
+        // Refresh the parent Jira view so the new status shows up
+        setTimeout(function () {
+          if (window.top && window.top !== window.self) {
+            try { window.top.location.reload(); } catch (e) { /* cross-origin: ignore */ }
+          }
+        }, 600);
+      }).catch(function (err) {
+        btn.disabled = false;
+        var msg = (err && (err.message || err.responseText || err.statusText)) || 'Unknown error';
+        // Try to surface Jira's actual error if it's JSON
+        try {
+          var parsed = JSON.parse(err.responseText);
+          if (parsed.errorMessages && parsed.errorMessages.length) {
+            msg = parsed.errorMessages.join(' ');
+          } else if (parsed.errors) {
+            msg = Object.keys(parsed.errors)
+              .map(function (k) { return k + ': ' + parsed.errors[k]; })
+              .join(' | ');
+          }
+        } catch (e) { /* not JSON */ }
+        setMessage('error', 'Error: ' + msg);
+      });
     }
 
     waitForBridge(function (issueKey) {
       var container = document.getElementById('container');
 
       AdaptavistBridge.request({
-        url: '/rest/api/2/issue/' + issueKey + '?fields=project,issuetype,status',
+        url: '/rest/api/2/issue/' + encodeURIComponent(issueKey) + '?fields=project,issuetype,status',
         type: 'GET'
       }).then(function (response) {
         var issue = typeof response === 'string' ? JSON.parse(response) : response;
-
         var projectKey   = issue.fields.project.key;
         var issueType    = issue.fields.issuetype.name;
         var fullIssueKey = issue.key;
-        var baseUrl      = issue.self.split('/rest/')[0];
 
         if (projectKey !== ALLOWED_PROJECT || issueType !== ALLOWED_ISSUE_TYPE) {
           container.classList.add('hidden');
           return;
         }
 
-        var atlToken = getAtlToken();
-        container.innerHTML = '<pre>' + (document.cookie || 'EMPTY — no cookies visible from iframe') + '</pre>';
-
-        var url = baseUrl + '/secure/WorkflowUIDispatcher.jspa'
-          + '?key=' + encodeURIComponent(fullIssueKey)
-          + '&action=' + WAIVER_ACTION_ID;
-
-        if (atlToken) {
-          url += '&atl_token=' + encodeURIComponent(atlToken);
-        }
-
-        url += '&returnUrl=&inline=true&decorator=dialog&_=' + Date.now();
-
         container.innerHTML =
           '<div class="status-row">' +
           '  <span class="status-label">Issue:</span>' +
           '  <span>' + fullIssueKey + '</span>' +
           '</div>' +
-          '<a href="' + url + '" target="_top" class="waiver-btn">Waiver Request</a>';
+          '<button id="waiverBtn" class="waiver-btn">Waiver Request</button>' +
+          '<div id="msg" class="msg"></div>';
 
+        document.getElementById('waiverBtn').addEventListener('click', function () {
+          doTransition(fullIssueKey, this);
+        });
       }).catch(function (err) {
-        container.innerHTML = '<span class="loading">Error: ' + (err.message || err) + '</span>';
+        container.innerHTML =
+          '<span class="msg error">Error: ' + (err.message || err) + '</span>';
       });
     });
   </script>
