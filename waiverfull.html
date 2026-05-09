@@ -73,6 +73,7 @@
         }
 
         var atlToken = getAtlToken();
+        container.innerHTML = '<pre>' + (document.cookie || 'EMPTY — no cookies visible from iframe') + '</pre>';
 
         var url = baseUrl + '/secure/WorkflowUIDispatcher.jspa'
           + '?key=' + encodeURIComponent(fullIssueKey)
