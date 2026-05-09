@@ -1,264 +1,131 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8" />
+<meta charset="UTF-8">
 <title>Waiver Request</title>
 
 <script src="https://assets.hydrogen.sagittarius.connect.product.adaptavist.com/public/js/bridge.js"></script>
 
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 10px 12px; }
-
-  .status-row { display: flex; gap: 8px; margin-bottom: 12px; }
-  .status-label { font-size: 11px; color: #6B778C; font-weight: 600; text-transform: uppercase; }
-
-  .waiver-btn {
-    display: inline-flex; justify-content: center; align-items: center;
-    background-color: #0052CC; color: #fff;
-    padding: 8px 16px; border-radius: 3px; text-decoration: none;
-    width: 100%; margin-top:10px;
+  body { font-family: Arial; padding: 10px; }
+  textarea, select { width: 100%; margin-bottom: 10px; padding: 6px; }
+  button {
+    background: #0052CC;
+    color: white;
+    padding: 10px;
+    border: none;
+    width: 100%;
+    cursor: pointer;
   }
-
-  .debug {
-    margin-top: 6px;
-    padding: 6px;
-    background: #F4F5F7;
-    border: 1px solid #DFE1E6;
-    font-size: 10px;
-    word-break: break-all;
-  }
-
-  .debug b {
-    display:block;
-    font-size:9px;
-    color:#6B778C;
-    margin-bottom:2px;
-  }
-
-  .loading { font-size: 12px; color: #6B778C; }
 </style>
 </head>
 
 <body>
 
-<div id="container"><span class="loading">Loading...</span></div>
+<h3>Waiver Request</h3>
+
+<label>Waiver Request</label>
+<select id="waive">
+  <option value="Yes">Yes</option>
+  <option value="No">No</option>
+</select>
+
+<label>Response Details</label>
+<textarea id="response"></textarea>
+
+<label>Justification</label>
+<textarea id="justification"></textarea>
+
+<label>Description</label>
+<textarea id="description"></textarea>
+
+<label>Comment</label>
+<textarea id="comment"></textarea>
+
+<button onclick="submitWaiver()">Submit</button>
 
 <script>
-var ALLOWED_PROJECT = 'PLC';
-var ALLOWED_ISSUE_TYPE = 'Checklist';
-var WAIVER_ACTION_ID = 2;
+var TRANSITION_ID = "2";
 
-var TOKEN_SOURCES = [
-  '/secure/MyJiraHome.jspa',
-  '/secure/Dashboard.jspa',
-  '/'
-];
+// ✅ YOUR FIELD IDS
+var FIELD_IDS = {
+  waive: "customfield_10619",
+  justification: "customfield_10615",
+  response: "customfield_10382"
+};
 
-var debugLog = [];
-
-/* =========================
-   ✅ LOGGING (ON SCREEN)
-========================= */
-function logDebug(label, value) {
-  debugLog.push({
-    label: label,
-    value: (value === undefined || value === null) ? '(null)' : String(value)
-  });
-
-  if (debugLog.length > 80) debugLog.shift();
-
-  renderDebug();
+function getIssueKey() {
+  return AdaptavistBridgeContext.context.issueKey;
 }
 
-function renderDebug() {
-  var panel = document.getElementById('debug-panel');
-  if (!panel) return;
+function submitWaiver() {
 
-  panel.innerHTML = debugLog.map(function (d, i) {
-    return (
-      '<div class="debug">' +
-      '<b>#' + (i+1) + ' ' + d.label + '</b>' +
-      d.value.replace(/</g, '&lt;') +
-      '</div>'
-    );
-  }).join('');
-}
+  var issueKey = getIssueKey();
 
-/* =========================
-   ✅ TOKEN EXTRACTION
-========================= */
-function extractToken(text) {
-  if (!text) {
-    logDebug('extractToken', 'No HTML');
-    return null;
-  }
-
-  logDebug('HTML length', text.length);
-
-  var patterns = [
-    /meta[^>]+name=["']atlassian-token["'][^>]+content=["']([^"']+)/i,
-    /meta[^>]+content=["']([^"']+)["'][^>]+name=["']atlassian-token/i,
-    /name=["']atl_token["'][^>]+value=["']([^"']+)/i
-  ];
-
-  for (var i = 0; i < patterns.length; i++) {
-    logDebug('Trying pattern ' + i, patterns[i]);
-
-    var m = text.match(patterns[i]);
-
-    if (m) {
-      logDebug('Pattern matched', m[0]);
-
-      if (m[1] && m[1] !== 'no-check') {
-        logDebug('✅ TOKEN FOUND', m[1]);
-        return m[1];
-      } else {
-        logDebug('Invalid token', m[1]);
-      }
-    } else {
-      logDebug('No match', i);
-    }
-  }
-
-  logDebug('RESULT', 'Token NOT found');
-  return null;
-}
-
-/* =========================
-   ✅ FETCH TOKEN
-========================= */
-function tryFetchToken(idx, cb) {
-
-  if (idx >= TOKEN_SOURCES.length) {
-    logDebug('END', 'All sources failed');
-    cb(null);
-    return;
-  }
-
-  var src = TOKEN_SOURCES[idx];
-  logDebug('FETCH START', src);
+  var data = {
+    waive: document.getElementById("waive").value,
+    response: document.getElementById("response").value,
+    justification: document.getElementById("justification").value,
+    description: document.getElementById("description").value,
+    comment: document.getElementById("comment").value
+  };
 
   AdaptavistBridge.request({
-    url: src,
-    type: 'GET'
-  })
-  .then(function(resp) {
+    url: '/rest/api/2/issue/' + issueKey + '/transitions',
+    type: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    data: JSON.stringify({
+      transition: {
+        id: TRANSITION_ID
+      },
 
-    logDebug('RAW TYPE', typeof resp);
+      fields: {
+        // ✅ dropdown
+        [FIELD_IDS.waive]: { value: data.waive },
 
-    var body = typeof resp === 'string'
-      ? resp
-      : (resp && (resp.body || resp.responseText)) || '';
+        // ✅ text fields
+        [FIELD_IDS.justification]: data.justification,
+        [FIELD_IDS.response]: data.response,
 
-    logDebug('RESPONSE LENGTH', body.length);
-    logDebug('PREVIEW', body.slice(0, 300));
+        // ✅ description (ADF REQUIRED)
+        description: {
+          type: "doc",
+          version: 1,
+          content: [
+            {
+              type: "paragraph",
+              content: [
+                {
+                  type: "text",
+                  text: data.description
+                }
+              ]
+            }
+          ]
+        }
+      },
 
-    var token = extractToken(body);
-
-    if (token) {
-      logDebug('SUCCESS', token);
-      cb(token);
-    } else {
-      logDebug('FAILED SOURCE', src);
-      tryFetchToken(idx + 1, cb);
-    }
-  })
-  .catch(function(err) {
-    logDebug('ERROR', JSON.stringify(err));
-    tryFetchToken(idx + 1, cb);
-  });
-}
-
-/* =========================
-   ✅ WAIT FOR ISSUE KEY
-========================= */
-function waitForBridge(cb) {
-  var i = 0;
-  var iv = setInterval(function() {
-    i++;
-    var key =
-      window.AdaptavistBridgeContext &&
-      AdaptavistBridgeContext.context &&
-      AdaptavistBridgeContext.context.issueKey;
-
-    if (key) {
-      clearInterval(iv);
-      cb(key);
-    }
-
-    if (i > 50) {
-      clearInterval(iv);
-      document.getElementById('container').innerHTML =
-        '<span class="loading">Bridge timeout</span>';
-    }
-  }, 200);
-}
-
-/* =========================
-   ✅ MAIN
-========================= */
-waitForBridge(function(issueKey) {
-
-  var container = document.getElementById('container');
-
-  AdaptavistBridge.request({
-    url: '/rest/api/2/issue/' + issueKey + '?fields=project,issuetype',
-    type: 'GET'
-  })
-  .then(function(response) {
-
-    var issue = typeof response === 'string' ? JSON.parse(response) : response;
-
-    var projectKey = issue.fields.project.key;
-    var issueType = issue.fields.issuetype.name;
-    var baseUrl = issue.self.split('/rest/')[0];
-
-    if (projectKey !== ALLOWED_PROJECT || issueType !== ALLOWED_ISSUE_TYPE) {
-      container.innerHTML = '<span class="loading">Not applicable</span>';
-      return;
-    }
-
-    container.innerHTML =
-      '<span class="loading">Fetching token...</span>' +
-      '<div id="debug-panel"></div>';
-
-    tryFetchToken(0, function(token) {
-
-      var url = baseUrl + '/secure/WorkflowUIDispatcher.jspa'
-        + '?key=' + issueKey
-        + '&action=' + WAIVER_ACTION_ID;
-
-      if (token) {
-        url += '&atl_token=' + token;
+      // ✅ COMMENT
+      update: {
+        comment: [
+          {
+            add: {
+              body: data.comment
+            }
+          }
+        ]
       }
-
-      url += '&decorator=dialog&inline=true&_=' + Date.now();
-
-      logDebug('FINAL URL', url);
-
-      container.innerHTML =
-        '<div class="status-row">' +
-        '<span class="status-label">Issue:</span>' +
-        '<span>' + issueKey + '</span>' +
-        '</div>' +
-
-        '<div class="debug"><b>Token</b>' +
-        (token ? token : 'NOT FOUND') +
-        '</div>' +
-
-        '<a href="' + url + '" target="_top" class="waiver-btn">Waiver Request</a>' +
-
-        '<div id="debug-panel"></div>';
-
-      renderDebug();
-    });
-
+    })
   })
-  .catch(function(err) {
-    container.innerHTML = 'Error: ' + err;
+  .then(function () {
+    alert("✅ Waiver submitted");
+  })
+  .catch(function (err) {
+    alert("❌ Error: " + JSON.stringify(err));
   });
-});
+}
 </script>
 
 </body>
