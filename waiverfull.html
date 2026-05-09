@@ -23,27 +23,6 @@
     .waiver-btn:active { background-color: #0747A6; }
     .hidden { display: none; }
     .loading { font-size: 12px; color: #6B778C; }
-    .debug {
-      margin-top: 12px;
-      padding: 8px;
-      background: #F4F5F7;
-      border: 1px solid #DFE1E6;
-      border-radius: 3px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 11px;
-      color: #172B4D;
-      word-break: break-all;
-      white-space: pre-wrap;
-      max-height: 200px;
-      overflow-y: auto;
-    }
-    .debug-title {
-      font-size: 10px;
-      font-weight: 700;
-      color: #6B778C;
-      text-transform: uppercase;
-      margin-bottom: 4px;
-    }
   </style>
 </head>
 <body>
@@ -52,62 +31,6 @@
     var ALLOWED_PROJECT    = 'PLC';
     var ALLOWED_ISSUE_TYPE = 'Checklist';
     var WAIVER_ACTION_ID   = 2;
-
-    function getAtlToken() {
-      var match = document.cookie.match(/atlassian\.xsrf\.token=([^;]+)/);
-      return match ? match[1] : null;
-    }
-
-    function renderCookieDebug() {
-      var raw = document.cookie || '';
-      var parsed = {};
-      if (raw) {
-        raw.split(';').forEach(function (c) {
-          var idx = c.indexOf('=');
-          if (idx === -1) return;
-          var k = c.slice(0, idx).trim();
-          var v = c.slice(idx + 1).trim();
-          parsed[k] = v;
-        });
-      }
-
-      var html =
-        '<div class="debug">' +
-          '<div class="debug-title">document.cookie (raw)</div>' +
-          (raw ? escapeHtml(raw) : '<em>EMPTY — no cookies visible from this iframe origin</em>') +
-        '</div>' +
-        '<div class="debug">' +
-          '<div class="debug-title">Parsed cookie object</div>' +
-          escapeHtml(JSON.stringify(parsed, null, 2)) +
-        '</div>' +
-        '<div class="debug">' +
-          '<div class="debug-title">atlassian.xsrf.token</div>' +
-          (parsed['atlassian.xsrf.token']
-            ? escapeHtml(parsed['atlassian.xsrf.token'])
-            : '<em>NOT FOUND in iframe cookies</em>') +
-        '</div>' +
-        '<div class="debug">' +
-          '<div class="debug-title">Iframe origin</div>' +
-          escapeHtml(window.location.origin) +
-        '</div>';
-
-      // Also log to console for easy copying
-      console.log('[Cookie Debug] document.cookie:', raw);
-      console.log('[Cookie Debug] parsed:', parsed);
-      console.log('[Cookie Debug] atl_token:', parsed['atlassian.xsrf.token'] || null);
-      console.log('[Cookie Debug] origin:', window.location.origin);
-
-      return html;
-    }
-
-    function escapeHtml(s) {
-      return String(s)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-    }
 
     function waitForBridge(cb) {
       var n = 0;
@@ -120,15 +43,16 @@
         else if (n >= 50) {
           clearInterval(iv);
           document.getElementById('container').innerHTML =
-            '<span class="loading">Bridge timeout.</span>' + renderCookieDebug();
+            '<span class="loading">Bridge timeout.</span>';
         }
       }, 200);
     }
 
     waitForBridge(function (issueKey) {
       var container = document.getElementById('container');
+
       AdaptavistBridge.request({
-        url: '/rest/api/2/issue/' + issueKey + '?fields=project,issuetype,status',
+        url: '/rest/api/2/issue/' + encodeURIComponent(issueKey) + '?fields=project,issuetype',
         type: 'GET'
       }).then(function (response) {
         var issue = typeof response === 'string' ? JSON.parse(response) : response;
@@ -138,26 +62,26 @@
         var baseUrl      = issue.self.split('/rest/')[0];
 
         if (projectKey !== ALLOWED_PROJECT || issueType !== ALLOWED_ISSUE_TYPE) {
-          // Still show the debug even when hidden — comment this out if you want it truly hidden
-          container.innerHTML = renderCookieDebug();
+          container.classList.add('hidden');
           return;
         }
 
-        var atlToken = getAtlToken();
+        // No atl_token, no decorator/inline. Top-window navigation = browser
+        // sends Jira cookies automatically. First click of the session shows
+        // a one-click "Confirm" page; subsequent clicks go straight to the screen.
         var url = baseUrl + '/secure/WorkflowUIDispatcher.jspa'
           + '?key=' + encodeURIComponent(fullIssueKey)
           + '&action=' + WAIVER_ACTION_ID;
-        if (atlToken) {
-          url += '&atl_token=' + encodeURIComponent(atlToken);
-        }
-        url += '&returnUrl=&inline=true&decorator=dialog&_=' + Date.now();
 
         container.innerHTML =
-          renderCookieDebug();
+          '<div class="status-row">' +
+          '  <span class="status-label">Issue:</span>' +
+          '  <span>' + fullIssueKey + '</span>' +
+          '</div>' +
+          '<a href="' + url + '" target="_top" class="waiver-btn">Waiver Request</a>';
       }).catch(function (err) {
         container.innerHTML =
-          '<span class="loading">Error: ' + (err.message || err) + '</span>' +
-          renderCookieDebug();
+          '<span class="loading">Error: ' + (err.message || err) + '</span>';
       });
     });
   </script>
