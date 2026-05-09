@@ -7,60 +7,117 @@
 <script src="https://assets.hydrogen.sagittarius.connect.product.adaptavist.com/public/js/bridge.js"></script>
 
 <style>
-  body { font-family: Arial; padding: 10px; }
-  textarea, select { width: 100%; margin-bottom: 10px; padding: 6px; }
+  body { font-family: Arial; }
+
+  /* ✅ DIALOG */
+  .modal {
+    display: none;
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0,0,0,0.5);
+    justify-content: center;
+    align-items: center;
+  }
+
+  .modal-content {
+    background: white;
+    padding: 15px;
+    width: 400px;
+    border-radius: 5px;
+  }
+
+  textarea, select {
+    width: 100%;
+    margin-bottom: 10px;
+    padding: 6px;
+  }
+
   button {
     background: #0052CC;
     color: white;
-    padding: 10px;
+    padding: 8px;
     border: none;
     width: 100%;
     cursor: pointer;
+  }
+
+  .open-btn {
+    margin-top: 20px;
   }
 </style>
 </head>
 
 <body>
 
-<h3>Waiver Request</h3>
+<button class="open-btn" onclick="openDialog()">Open Waiver Request</button>
 
-<label>Waiver Request</label>
-<select id="waive">
-  <option value="Yes">Yes</option>
-  <option value="No">No</option>
-</select>
+<!-- ✅ MODAL DIALOG -->
+<div id="dialog" class="modal">
+  <div class="modal-content">
 
-<label>Response Details</label>
-<textarea id="response"></textarea>
+    <h3>Waiver Request</h3>
 
-<label>Justification</label>
-<textarea id="justification"></textarea>
+    <label>Waiver Request</label>
+    <select id="waive">
+      <option value="Yes">Yes</option>
+      <option value="No">No</option>
+    </select>
 
-<label>Description</label>
-<textarea id="description"></textarea>
+    <label>Response Details</label>
+    <textarea id="response"></textarea>
 
-<label>Comment</label>
-<textarea id="comment"></textarea>
+    <label>Justification</label>
+    <textarea id="justification"></textarea>
 
-<button onclick="submitWaiver()">Submit</button>
+    <label>Description</label>
+    <textarea id="description"></textarea>
+
+    <label>Comment</label>
+    <textarea id="comment"></textarea>
+
+    <button onclick="submitWaiver()">Submit</button>
+    <button onclick="closeDialog()">Cancel</button>
+
+  </div>
+</div>
 
 <script>
 var TRANSITION_ID = "2";
 
-// ✅ YOUR FIELD IDS
 var FIELD_IDS = {
   waive: "customfield_10619",
   justification: "customfield_10615",
   response: "customfield_10382"
 };
 
-function getIssueKey() {
-  return AdaptavistBridgeContext.context.issueKey;
+/* ✅ Dialog control */
+function openDialog() {
+  document.getElementById("dialog").style.display = "flex";
 }
 
+function closeDialog() {
+  document.getElementById("dialog").style.display = "none";
+}
+
+/* ✅ WAIT FOR BRIDGE */
+function getIssueKey() {
+  if (
+    window.AdaptavistBridgeContext &&
+    AdaptavistBridgeContext.context &&
+    AdaptavistBridgeContext.context.issueKey
+  ) {
+    return AdaptavistBridgeContext.context.issueKey;
+  }
+  alert("❌ Issue key not found (Bridge not ready)");
+  return null;
+}
+
+/* ✅ SUBMIT */
 function submitWaiver() {
 
   var issueKey = getIssueKey();
+  if (!issueKey) return;
 
   var data = {
     waive: document.getElementById("waive").value,
@@ -69,6 +126,8 @@ function submitWaiver() {
     description: document.getElementById("description").value,
     comment: document.getElementById("comment").value
   };
+
+  console.log("Sending Data:", data); // 👈 debug
 
   AdaptavistBridge.request({
     url: '/rest/api/2/issue/' + issueKey + '/transitions',
@@ -80,8 +139,8 @@ function submitWaiver() {
       transition: {
         id: TRANSITION_ID
       },
-
       fields: {
+
         // ✅ dropdown
         [FIELD_IDS.waive]: { value: data.waive },
 
@@ -89,7 +148,7 @@ function submitWaiver() {
         [FIELD_IDS.justification]: data.justification,
         [FIELD_IDS.response]: data.response,
 
-        // ✅ description (ADF REQUIRED)
+        // ✅ description (ADF)
         description: {
           type: "doc",
           version: 1,
@@ -119,11 +178,14 @@ function submitWaiver() {
       }
     })
   })
-  .then(function () {
-    alert("✅ Waiver submitted");
+  .then(function (res) {
+    alert("✅ Success");
+    console.log("Response:", res);
+    closeDialog();
   })
   .catch(function (err) {
-    alert("❌ Error: " + JSON.stringify(err));
+    alert("❌ Error");
+    console.log("Error:", err);
   });
 }
 </script>
