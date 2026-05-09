@@ -6,43 +6,24 @@
   <script src="https://assets.hydrogen.sagittarius.connect.product.adaptavist.com/public/js/bridge.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
-      padding: 10px 12px;
-    }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 10px 12px; }
     .status-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
     .status-label { font-size: 11px; color: #6B778C; font-weight: 600; text-transform: uppercase; }
-    .token-row {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 11px;
-      color: #172B4D;
-      background: #F4F5F7;
-      border: 1px solid #DFE1E6;
-      border-radius: 3px;
-      padding: 6px 8px;
-      margin-bottom: 10px;
-      word-break: break-all;
-    }
-    .token-label {
-      display: block;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      font-size: 10px;
-      font-weight: 700;
-      color: #6B778C;
-      text-transform: uppercase;
-      margin-bottom: 2px;
-    }
     .waiver-btn {
       display: inline-flex; align-items: center; gap: 6px;
       background-color: #0052CC; color: #FFFFFF; border: none; border-radius: 3px;
       padding: 8px 16px; font-size: 14px; font-weight: 500; cursor: pointer;
       width: 100%; justify-content: center; text-decoration: none;
-      transition: background-color 0.2s ease;
     }
     .waiver-btn:hover { background-color: #0065FF; }
-    .waiver-btn:active { background-color: #0747A6; }
     .hidden { display: none; }
     .loading { font-size: 12px; color: #6B778C; }
+    .debug { margin-top: 10px; padding: 6px 8px; background: #F4F5F7;
+             border: 1px solid #DFE1E6; border-radius: 3px;
+             font-family: ui-monospace, Menlo, monospace; font-size: 10px;
+             color: #172B4D; word-break: break-all; }
+    .debug b { color: #6B778C; font-family: -apple-system, sans-serif; font-size: 9px;
+               text-transform: uppercase; letter-spacing: 0.5px; display: block; margin-bottom: 2px; }
   </style>
 </head>
 <body>
@@ -52,30 +33,74 @@
     var ALLOWED_ISSUE_TYPE = 'Checklist';
     var WAIVER_ACTION_ID   = 2;
 
-    function getAtlToken() {
-      var match = window.location.search.match(/[?&]atl_token=([^&]+)/);
-      return match ? decodeURIComponent(match[1]) : null;
+    var TOKEN_SOURCES = ['/secure/MyJiraHome.jspa', '/secure/Dashboard.jspa', '/'];
+    var debugLog = [];
+
+    function logDebug(label, value) {
+      debugLog.push({ label: label, value: String(value).slice(0, 300) });
+    }
+
+    function extractToken(text) {
+      if (!text) return null;
+      var patterns = [
+        /<meta[^>]+name=["']atlassian-token["'][^>]+content=["']([^"']+)["']/i,
+        /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']atlassian-token["']/i,
+        /name=["']atl_token["'][^>]+value=["']([^"']+)["']/i
+      ];
+      for (var i = 0; i < patterns.length; i++) {
+        var m = String(text).match(patterns[i]);
+        if (m && m[1] && m[1] !== 'no-check') return m[1];
+      }
+      return null;
+    }
+
+    function tryFetchToken(idx, cb) {
+      if (idx >= TOKEN_SOURCES.length) { cb(null); return; }
+      var src = TOKEN_SOURCES[idx];
+      AdaptavistBridge.request({ url: src, type: 'GET' })
+        .then(function (resp) {
+          var body = typeof resp === 'string' ? resp :
+                     (resp && (resp.body || resp.responseText)) ||
+                     JSON.stringify(resp);
+          logDebug('GET ' + src + ' (' + (body ? body.length : 0) + ' bytes)',
+                   body ? body.slice(0, 200) : '(empty)');
+          var tok = extractToken(body);
+          if (tok) { logDebug('parsed token from ' + src, tok); cb(tok); }
+          else tryFetchToken(idx + 1, cb);
+        })
+        .catch(function (err) {
+          logDebug('FAILED ' + src, (err && (err.message || err.statusText)) || JSON.stringify(err));
+          tryFetchToken(idx + 1, cb);
+        });
     }
 
     function waitForBridge(cb) {
       var n = 0;
       var iv = setInterval(function () {
         n++;
-        var k = null;
-        if (window.AdaptavistBridgeContext && AdaptavistBridgeContext.context)
-          k = AdaptavistBridgeContext.context.issueKey;
+        var k = window.AdaptavistBridgeContext &&
+                AdaptavistBridgeContext.context &&
+                AdaptavistBridgeContext.context.issueKey;
         if (k) { clearInterval(iv); cb(k); }
         else if (n >= 50) {
           clearInterval(iv);
-          document.getElementById('container').innerHTML = '<span class="loading">Bridge timeout.</span>';
+          document.getElementById('container').innerHTML =
+            '<span class="loading">Bridge timeout.</span>';
         }
       }, 200);
+    }
+
+    function renderDebug() {
+      return debugLog.map(function (d) {
+        return '<div class="debug"><b>' + d.label + '</b>' +
+               (d.value || '').replace(/</g, '&lt;') + '</div>';
+      }).join('');
     }
 
     waitForBridge(function (issueKey) {
       var container = document.getElementById('container');
       AdaptavistBridge.request({
-        url: '/rest/api/2/issue/' + issueKey + '?fields=project,issuetype,status',
+        url: '/rest/api/2/issue/' + encodeURIComponent(issueKey) + '?fields=project,issuetype',
         type: 'GET'
       }).then(function (response) {
         var issue = typeof response === 'string' ? JSON.parse(response) : response;
@@ -83,28 +108,32 @@
         var issueType    = issue.fields.issuetype.name;
         var fullIssueKey = issue.key;
         var baseUrl      = issue.self.split('/rest/')[0];
+
         if (projectKey !== ALLOWED_PROJECT || issueType !== ALLOWED_ISSUE_TYPE) {
           container.classList.add('hidden');
           return;
         }
-        var atlToken = getAtlToken();
-        var url = baseUrl + '/secure/WorkflowUIDispatcher.jspa'
-          + '?key=' + encodeURIComponent(fullIssueKey)
-          + '&action=' + WAIVER_ACTION_ID;
-        if (atlToken) {
-          url += '&atl_token=' + encodeURIComponent(atlToken);
-        }
-        url += '&returnUrl=&inline=true&decorator=dialog&_=' + Date.now();
-        container.innerHTML =
-          '<div class="status-row">' +
-          '  <span class="status-label">Issue:</span>' +
-          '  <span>' + fullIssueKey + '</span>' +
-          '</div>' +
-          '<div class="token-row">' +
-          '  <span class="token-label">atl_token</span>' +
-          (atlToken ? atlToken : '<em>NOT FOUND in URL</em>') +
-          '</div>' +
-          '<a href="' + url + '" target="_top" class="waiver-btn">Waiver Request</a>';
+
+        container.innerHTML = '<span class="loading">Fetching token from Jira HTML...</span>';
+
+        tryFetchToken(0, function (token) {
+          var url = baseUrl + '/secure/WorkflowUIDispatcher.jspa'
+            + '?key=' + encodeURIComponent(fullIssueKey)
+            + '&action=' + WAIVER_ACTION_ID;
+          if (token) url += '&atl_token=' + encodeURIComponent(token);
+          url += '&decorator=dialog&inline=true&_=' + Date.now();
+
+          container.innerHTML =
+            '<div class="status-row">' +
+            '  <span class="status-label">Issue:</span>' +
+            '  <span>' + fullIssueKey + '</span>' +
+            '</div>' +
+            '<div class="debug"><b>extracted token</b>' +
+            (token ? token : '<em>NOT FOUND</em>') + '</div>' +
+            '<a href="' + url + '" target="_top" class="waiver-btn">Waiver Request</a>' +
+            '<details style="margin-top:10px"><summary style="font-size:11px;color:#6B778C;cursor:pointer">debug log</summary>' +
+            renderDebug() + '</details>';
+        });
       }).catch(function (err) {
         container.innerHTML = '<span class="loading">Error: ' + (err.message || err) + '</span>';
       });
