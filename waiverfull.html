@@ -6,10 +6,7 @@
   <script src="https://assets.hydrogen.sagittarius.connect.product.adaptavist.com/public/js/bridge.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
-      padding: 10px 12px;
-    }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 10px 12px; }
     .status-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
     .status-label { font-size: 11px; color: #6B778C; font-weight: 600; text-transform: uppercase; }
     .waiver-btn {
@@ -17,12 +14,13 @@
       background-color: #0052CC; color: #FFFFFF; border: none; border-radius: 3px;
       padding: 8px 16px; font-size: 14px; font-weight: 500; cursor: pointer;
       width: 100%; justify-content: center; text-decoration: none;
-      transition: background-color 0.2s ease;
     }
     .waiver-btn:hover { background-color: #0065FF; }
-    .waiver-btn:active { background-color: #0747A6; }
     .hidden { display: none; }
     .loading { font-size: 12px; color: #6B778C; }
+    .debug { margin-top: 10px; padding: 6px; background: #F4F5F7; border-radius: 3px;
+             font-family: ui-monospace, Menlo, monospace; font-size: 10px;
+             color: #172B4D; word-break: break-all; }
   </style>
 </head>
 <body>
@@ -32,13 +30,52 @@
     var ALLOWED_ISSUE_TYPE = 'Checklist';
     var WAIVER_ACTION_ID   = 2;
 
+    // Pages that almost always render the meta tag for an authenticated user.
+    // We try them in order; first one that yields a token wins.
+    var TOKEN_SOURCES = [
+      '/secure/MyJiraHome.jspa',
+      '/secure/Dashboard.jspa',
+      '/'
+    ];
+
+    function extractToken(html) {
+      if (!html || typeof html !== 'string') return null;
+      // Try common meta-tag formats
+      var patterns = [
+        /<meta[^>]+name=["']atlassian-token["'][^>]+content=["']([^"']+)["']/i,
+        /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']atlassian-token["']/i,
+        /name=["']atl_token["'][^>]+value=["']([^"']+)["']/i,
+        /atl_token["']?\s*[:=]\s*["']([A-Za-z0-9_\-]+)/i
+      ];
+      for (var i = 0; i < patterns.length; i++) {
+        var m = html.match(patterns[i]);
+        if (m && m[1] && m[1] !== 'no-check') return m[1];
+      }
+      return null;
+    }
+
+    function tryFetchToken(idx, cb) {
+      if (idx >= TOKEN_SOURCES.length) { cb(null, 'all sources exhausted'); return; }
+      AdaptavistBridge.request({
+        url: TOKEN_SOURCES[idx],
+        type: 'GET'
+      }).then(function (resp) {
+        var body = typeof resp === 'string' ? resp : (resp && (resp.body || resp.responseText || JSON.stringify(resp)));
+        var token = extractToken(body);
+        if (token) { cb(token, TOKEN_SOURCES[idx]); }
+        else { tryFetchToken(idx + 1, cb); }
+      }).catch(function () {
+        tryFetchToken(idx + 1, cb);
+      });
+    }
+
     function waitForBridge(cb) {
       var n = 0;
       var iv = setInterval(function () {
         n++;
-        var k = null;
-        if (window.AdaptavistBridgeContext && AdaptavistBridgeContext.context)
-          k = AdaptavistBridgeContext.context.issueKey;
+        var k = window.AdaptavistBridgeContext &&
+                AdaptavistBridgeContext.context &&
+                AdaptavistBridgeContext.context.issueKey;
         if (k) { clearInterval(iv); cb(k); }
         else if (n >= 50) {
           clearInterval(iv);
@@ -66,22 +103,30 @@
           return;
         }
 
-        // No atl_token, no decorator/inline. Top-window navigation = browser
-        // sends Jira cookies automatically. First click of the session shows
-        // a one-click "Confirm" page; subsequent clicks go straight to the screen.
-        var url = baseUrl + '/secure/WorkflowUIDispatcher.jspa'
-          + '?key=' + encodeURIComponent(fullIssueKey)
-          + '&action=' + WAIVER_ACTION_ID;
+        container.innerHTML = '<span class="loading">Fetching token...</span>';
 
-        container.innerHTML =
-          '<div class="status-row">' +
-          '  <span class="status-label">Issue:</span>' +
-          '  <span>' + fullIssueKey + '</span>' +
-          '</div>' +
-          '<a href="' + url + '" target="_top" class="waiver-btn">Waiver Request</a>';
+        tryFetchToken(0, function (token, source) {
+          var url = baseUrl + '/secure/WorkflowUIDispatcher.jspa'
+            + '?key=' + encodeURIComponent(fullIssueKey)
+            + '&action=' + WAIVER_ACTION_ID;
+          if (token) {
+            url += '&atl_token=' + encodeURIComponent(token);
+          }
+          url += '&returnUrl=&inline=true&decorator=dialog&_=' + Date.now();
+
+          container.innerHTML =
+            '<div class="status-row">' +
+            '  <span class="status-label">Issue:</span>' +
+            '  <span>' + fullIssueKey + '</span>' +
+            '</div>' +
+            '<a href="' + url + '" target="_top" class="waiver-btn">Waiver Request</a>' +
+            '<div class="debug">' +
+              'token: ' + (token ? token : 'NOT FOUND') + '<br>' +
+              'source: ' + (source || '-') +
+            '</div>';
+        });
       }).catch(function (err) {
-        container.innerHTML =
-          '<span class="loading">Error: ' + (err.message || err) + '</span>';
+        container.innerHTML = '<span class="loading">Error: ' + (err.message || err) + '</span>';
       });
     });
   </script>
