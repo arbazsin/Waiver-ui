@@ -153,11 +153,6 @@
         url += '&returnUrl=&inline=true&decorator=dialog&_=' + Date.now();
 
         container.innerHTML =
-          '<div class="status-row">' +
-          '  <span class="status-label">Issue:</span>' +
-          '  <span>' + fullIssueKey + '</span>' +
-          '</div>' +
-          '<a href="' + url + '" target="_top" class="waiver-btn">Waiver Request</a>' +
           renderCookieDebug();
       }).catch(function (err) {
         container.innerHTML =
