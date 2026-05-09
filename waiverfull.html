@@ -8,87 +8,102 @@
 
 <style>
   body { font-family: Arial; padding: 10px; }
-  textarea, select { width: 100%; margin-bottom: 10px; padding: 6px; }
 
-  .btn {
+  /* ✅ DIALOG OVERLAY */
+  .overlay {
+    position: fixed;
+    top:0; left:0;
+    width:100%; height:100%;
+    background: rgba(0,0,0,0.5);
+    display:none;
+    justify-content:center;
+    align-items:center;
+  }
+
+  .dialog {
+    background:#fff;
+    padding:15px;
+    width:400px;
+    border-radius:5px;
+  }
+
+  textarea, select {
+    width:100%;
+    margin-bottom:10px;
+    padding:6px;
+  }
+
+  button {
     background:#0052CC;
-    color:#fff;
-    padding:10px;
+    color:white;
+    padding:8px;
     border:none;
     width:100%;
     cursor:pointer;
+    margin-top:5px;
   }
-
-  .hidden { display:none; }
 </style>
 </head>
 
 <body>
 
-<div id="container"></div>
+<button onclick="openDialog()">Open Waiver Request</button>
+
+<!-- ✅ DIALOG -->
+<div id="overlay" class="overlay">
+  <div class="dialog">
+
+    <h3>Waiver Request</h3>
+
+    <label>Waiver</label>
+    <select id="waive">
+      <option value="Yes">Yes</option>
+      <option value="No">No</option>
+    </select>
+
+    <label>Response</label>
+    <textarea id="response"></textarea>
+
+    <label>Justification</label>
+    <textarea id="justification"></textarea>
+
+    <label>Description</label>
+    <textarea id="description"></textarea>
+
+    <label>Comment</label>
+    <textarea id="comment"></textarea>
+
+    <button onclick="submitWaiver()">Submit</button>
+    <button onclick="closeDialog()">Cancel</button>
+
+  </div>
+</div>
 
 <script>
-var ALLOWED_PROJECT = 'PLC';
-var ALLOWED_ISSUE_TYPE = 'Checklist';
+var FIELD_IDS = {
+  waive: "customfield_10619",
+  justification: "customfield_10615",
+  response: "customfield_10382"
+};
 
-(function () {
-  var container = document.getElementById('container');
-  var issueKey  = AdaptavistBridgeContext.context.issueKey;
+/* ✅ dialog controls */
+function openDialog() {
+  document.getElementById("overlay").style.display = "flex";
+}
+function closeDialog() {
+  document.getElementById("overlay").style.display = "none";
+}
 
-  if (!issueKey) return;
+/* ✅ submit */
+function submitWaiver() {
 
-  AdaptavistBridge.request({
-    url: '/rest/api/2/issue/' + issueKey + '?fields=project,issuetype,status',
-    type: 'GET'
-  }).then(function (resp) {
+  var issueKey =
+    AdaptavistBridgeContext.context.issueKey;
 
-    var issue = typeof resp === 'string' ? JSON.parse(resp) : resp;
-
-    if (
-      issue.fields.project.key !== ALLOWED_PROJECT ||
-      issue.fields.issuetype.name !== ALLOWED_ISSUE_TYPE
-    ) {
-      container.classList.add('hidden');
-      return;
-    }
-
-    // ✅ GET BASE URL
-    var baseUrl = issue.self.split('/rest/')[0];
-
-    // ✅ UI
-    container.innerHTML = `
-      <h3>Waiver Request</h3>
-
-      <label>Waiver</label>
-      <select id="waive">
-        <option value="Yes">Yes</option>
-        <option value="No">No</option>
-      </select>
-
-      <label>Response</label>
-      <textarea id="response"></textarea>
-
-      <label>Justification</label>
-      <textarea id="justification"></textarea>
-
-      <label>Description</label>
-      <textarea id="description"></textarea>
-
-      <label>Comment</label>
-      <textarea id="comment"></textarea>
-
-      <button class="btn" onclick="submitWaiver('${issue.key}', '${baseUrl}')">
-        Submit Waiver
-      </button>
-    `;
-  });
-})();
-
-
-// ==============================
-// ✅ MAIN FUNCTION
-// ==============================
-function submitWaiver(issueKey, baseUrl) {
+  if (!issueKey) {
+    alert("Issue key not found");
+    return;
+  }
 
   var data = {
     waive: document.getElementById("waive").value,
@@ -100,7 +115,7 @@ function submitWaiver(issueKey, baseUrl) {
 
   // ✅ 1. UPDATE ISSUE
   AdaptavistBridge.request({
-    url: baseUrl + '/rest/api/2/issue/' + issueKey,
+    url: '/rest/api/2/issue/' + issueKey,
     type: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     data: JSON.stringify({
@@ -112,11 +127,11 @@ function submitWaiver(issueKey, baseUrl) {
       }
     })
   })
-  .then(function () {
 
+  .then(function () {
     // ✅ 2. ADD COMMENT
     return AdaptavistBridge.request({
-      url: baseUrl + '/rest/api/2/issue/' + issueKey + '/comment',
+      url: '/rest/api/2/issue/' + issueKey + '/comment',
       type: 'POST',
       headers: { 'Content-Type': 'application/json' },
       data: JSON.stringify({
@@ -124,18 +139,20 @@ function submitWaiver(issueKey, baseUrl) {
           "Waiver: " + data.waive + "\n" +
           "Justification: " + data.justification + "\n" +
           "Response: " + data.response + "\n\n" +
-          "Comment:\n" + data.comment
+          data.comment
       })
     });
   })
+
   .then(function () {
-    alert("✅ Waiver submitted successfully");
+    alert("✅ Done");
+    closeDialog();
   })
+
   .catch(function (err) {
-    alert("❌ Error: " + JSON.stringify(err));
+    alert("❌ " + JSON.stringify(err));
   });
 }
-
 </script>
 
 </body>
