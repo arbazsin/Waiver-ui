@@ -47,6 +47,24 @@
       }, 200);
     }
 
+    // Pull atl_token by hitting an authenticated Jira page via the bridge.
+    // The token appears in page HTML as a meta tag or hidden input.
+    function fetchAtlToken(issueKey) {
+      return AdaptavistBridge.request({
+        url: '/secure/ViewIssue.jspa?key=' + encodeURIComponent(issueKey),
+        type: 'GET'
+      }).then(function (html) {
+        var s = typeof html === 'string' ? html : '';
+        // Try meta tag first
+        var m = s.match(/<meta[^>]+name=["']atlassian-token["'][^>]+content=["']([^"']+)["']/i);
+        if (m) return m[1];
+        // Try hidden input
+        m = s.match(/name=["']atl_token["'][^>]+value=["']([^"']+)["']/i);
+        if (m) return m[1];
+        return null;
+      }).catch(function () { return null; });
+    }
+
     waitForBridge(function (issueKey) {
       var container = document.getElementById('container');
       AdaptavistBridge.request({
@@ -64,19 +82,24 @@
           return;
         }
 
-        // No atl_token — browser supplies cookies automatically on top-level navigation
-        var url = baseUrl + '/secure/WorkflowUIDispatcher.jspa'
-          + '?key=' + encodeURIComponent(fullIssueKey)
-          + '&action=' + WAIVER_ACTION_ID
-          + '&inline=true&decorator=dialog'
-          + '&_=' + Date.now();
+        return fetchAtlToken(fullIssueKey).then(function (atlToken) {
+          var url = baseUrl + '/secure/WorkflowUIDispatcher.jspa'
+            + '?key=' + encodeURIComponent(fullIssueKey)
+            + '&action=' + WAIVER_ACTION_ID
+            + '&inline=true&decorator=dialog'
+            + '&_=' + Date.now();
 
-        container.innerHTML =
-          '<div class="status-row">' +
-          '  <span class="status-label">Issue:</span>' +
-          '  <span>' + fullIssueKey + '</span>' +
-          '</div>' +
-          '<a href="' + url + '" target="_top" class="waiver-btn">Waiver Request</a>';
+          if (atlToken) {
+            url += '&atl_token=' + encodeURIComponent(atlToken);
+          }
+
+          container.innerHTML =
+            '<div class="status-row">' +
+            '  <span class="status-label">Issue:</span>' +
+            '  <span>' + fullIssueKey + '</span>' +
+            '</div>' +
+            '<a href="' + url + '" target="_top" class="waiver-btn">Waiver Request</a>';
+        });
       }).catch(function (err) {
         container.innerHTML = '<span class="loading">Error: ' + (err.message || err) + '</span>';
       });
