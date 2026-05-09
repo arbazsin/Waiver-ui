@@ -1,159 +1,116 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<title>Waiver Request</title>
+  <meta charset="UTF-8" />
+  <title>Waiver Request</title>
+  <script src="https://assets.hydrogen.sagittarius.connect.product.adaptavist.com/public/js/bridge.js"></script>
 
-<script src="https://assets.hydrogen.sagittarius.connect.product.adaptavist.com/public/js/bridge.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
 
-<style>
-  body { font-family: Arial; padding: 10px; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+      padding: 10px 12px;
+    }
 
-  /* ✅ DIALOG OVERLAY */
-  .overlay {
-    position: fixed;
-    top:0; left:0;
-    width:100%; height:100%;
-    background: rgba(0,0,0,0.5);
-    display:none;
-    justify-content:center;
-    align-items:center;
-  }
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
 
-  .dialog {
-    background:#fff;
-    padding:15px;
-    width:400px;
-    border-radius:5px;
-  }
+    .status-label {
+      font-size: 11px;
+      color: #6B778C;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
 
-  textarea, select {
-    width:100%;
-    margin-bottom:10px;
-    padding:6px;
-  }
+    .status-badge {
+      background-color: #DEEBFF;
+      color: #0747A6;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 12px;
+      font-weight: 700;
+    }
 
-  button {
-    background:#0052CC;
-    color:white;
-    padding:8px;
-    border:none;
-    width:100%;
-    cursor:pointer;
-    margin-top:5px;
-  }
-</style>
+    .waiver-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background-color: #0052CC;
+      color: #FFFFFF;
+      border: none;
+      border-radius: 3px;
+      padding: 8px 16px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      width: 100%;
+      text-decoration: none;
+    }
+
+    .waiver-btn:hover { background-color: #0065FF; }
+    .hidden { display: none; }
+  </style>
 </head>
 
 <body>
 
-<button onclick="openDialog()">Open Waiver Request</button>
+  <div id="container"></div>
 
-<!-- ✅ DIALOG -->
-<div id="overlay" class="overlay">
-  <div class="dialog">
+  <script>
+    var ALLOWED_PROJECT    = 'PLC';
+    var ALLOWED_ISSUE_TYPE = 'Checklist';
+    var WAIVER_ACTION_ID   = 2;
 
-    <h3>Waiver Request</h3>
+    (function () {
 
-    <label>Waiver</label>
-    <select id="waive">
-      <option value="Yes">Yes</option>
-      <option value="No">No</option>
-    </select>
+      var container = document.getElementById('container');
+      var issueKey  = AdaptavistBridgeContext.context.issueKey;
 
-    <label>Response</label>
-    <textarea id="response"></textarea>
-
-    <label>Justification</label>
-    <textarea id="justification"></textarea>
-
-    <label>Description</label>
-    <textarea id="description"></textarea>
-
-    <label>Comment</label>
-    <textarea id="comment"></textarea>
-
-    <button onclick="submitWaiver()">Submit</button>
-    <button onclick="closeDialog()">Cancel</button>
-
-  </div>
-</div>
-
-<script>
-var FIELD_IDS = {
-  waive: "customfield_10619",
-  justification: "customfield_10615",
-  response: "customfield_10382"
-};
-
-/* ✅ dialog controls */
-function openDialog() {
-  document.getElementById("overlay").style.display = "flex";
-}
-function closeDialog() {
-  document.getElementById("overlay").style.display = "none";
-}
-
-/* ✅ submit */
-function submitWaiver() {
-
-  var issueKey =
-    AdaptavistBridgeContext.context.issueKey;
-
-  if (!issueKey) {
-    alert("Issue key not found");
-    return;
-  }
-
-  var data = {
-    waive: document.getElementById("waive").value,
-    response: document.getElementById("response").value,
-    justification: document.getElementById("justification").value,
-    description: document.getElementById("description").value,
-    comment: document.getElementById("comment").value
-  };
-
-  // ✅ 1. UPDATE ISSUE
-  AdaptavistBridge.request({
-    url: '/rest/api/2/issue/' + issueKey,
-    type: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    data: JSON.stringify({
-      fields: {
-        customfield_10619: { value: data.waive },
-        customfield_10615: data.justification,
-        customfield_10382: data.response,
-        description: data.description
+      if (!issueKey) {
+        container.classList.add('hidden');
+        return;
       }
-    })
-  })
 
-  .then(function () {
-    // ✅ 2. ADD COMMENT
-    return AdaptavistBridge.request({
-      url: '/rest/api/2/issue/' + issueKey + '/comment',
-      type: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      data: JSON.stringify({
-        body:
-          "Waiver: " + data.waive + "\n" +
-          "Justification: " + data.justification + "\n" +
-          "Response: " + data.response + "\n\n" +
-          data.comment
-      })
-    });
-  })
+      AdaptavistBridge.request({
+        url: '/rest/api/2/issue/' + issueKey + '?fields=project,issuetype,status',
+        type: 'GET'
+      }).then(function (response) {
 
-  .then(function () {
-    alert("✅ Done");
-    closeDialog();
-  })
+        var issue      = typeof response === 'string' ? JSON.parse(response) : response;
+        var projectKey = issue.fields.project.key;
+        var issueType  = issue.fields.issuetype.name;
+        var statusName = issue.fields.status.name;
+        var issueId    = issue.id;
 
-  .catch(function (err) {
-    alert("❌ " + JSON.stringify(err));
-  });
-}
-</script>
+        if (projectKey !== ALLOWED_PROJECT || issueType !== ALLOWED_ISSUE_TYPE) {
+          container.classList.add('hidden');
+          return;
+        }
+
+        container.innerHTML =
+          '<div class="status-row">' +
+          '  <span class="status-label">Status:</span>' +
+          '  <span class="status-badge">' + statusName + '</span>' +
+          '</div>' +
+          '<button class="waiver-btn" onclick="openJSPA(' + issueId + ')">Waiver Request</button>';
+
+      }).catch(function () {
+        container.classList.add('hidden');
+      });
+
+    })();
+
+    // ✅ CLEAN REDIRECT FUNCTION
+    function openJSPA(issueId) {
+      window.top.location.href =
+        '/secure/WorkflowUIDispatcher.jspa?id=' + issueId + '&action=' + WAIVER_ACTION_ID;
+    }
+  </script>
 
 </body>
 </html>
