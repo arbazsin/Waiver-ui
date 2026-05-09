@@ -10,139 +10,52 @@
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
       padding: 10px 12px;
     }
-    .status-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 12px;
-    }
-    .status-label {
-      font-size: 11px;
-      color: #6B778C;
-      font-weight: 600;
-      text-transform: uppercase;
-    }
+    .status-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+    .status-label { font-size: 11px; color: #6B778C; font-weight: 600; text-transform: uppercase; }
     .waiver-btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      background-color: #0052CC;
-      color: #FFFFFF;
-      border: none;
-      border-radius: 3px;
-      padding: 8px 16px;
-      font-size: 14px;
-      font-weight: 500;
-      cursor: pointer;
-      width: 100%;
-      justify-content: center;
-      text-decoration: none;
+      display: inline-flex; align-items: center; gap: 6px;
+      background-color: #0052CC; color: #FFFFFF; border: none; border-radius: 3px;
+      padding: 8px 16px; font-size: 14px; font-weight: 500; cursor: pointer;
+      width: 100%; justify-content: center; text-decoration: none;
       transition: background-color 0.2s ease;
     }
     .waiver-btn:hover { background-color: #0065FF; }
     .waiver-btn:active { background-color: #0747A6; }
-    .waiver-btn.processing { background-color: #B3D4FF; cursor: wait; }
-    .waiver-btn.success { background-color: #00875A; }
-    .waiver-btn.error { background-color: #DE350B; }
     .hidden { display: none; }
     .loading { font-size: 12px; color: #6B778C; }
-    .msg { margin-top: 8px; font-size: 12px; padding: 6px 10px; border-radius: 3px; }
-    .msg.success { background: #E3FCEF; color: #006644; }
-    .msg.error { background: #FFEBE6; color: #BF2600; }
-    .debug-panel {
-      margin-top: 12px;
-      padding: 8px;
-      background: #F4F5F7;
-      border: 1px solid #DFE1E6;
-      border-radius: 3px;
-      font-size: 11px;
-      font-family: monospace;
-      color: #172B4D;
-      white-space: pre-wrap;
-      word-break: break-all;
-    }
-    .fields-form { margin-top: 10px; }
-    .fields-form label {
-      display: block;
-      font-size: 12px;
-      font-weight: 600;
-      color: #172B4D;
-      margin-bottom: 4px;
-      margin-top: 8px;
-    }
-    .fields-form input,
-    .fields-form select,
-    .fields-form textarea {
-      width: 100%;
-      padding: 6px 8px;
-      border: 1px solid #DFE1E6;
-      border-radius: 3px;
-      font-size: 13px;
-      font-family: inherit;
-    }
-    .fields-form textarea { resize: vertical; min-height: 60px; }
   </style>
 </head>
 <body>
   <div id="container"><span class="loading">Loading...</span></div>
-  <div id="debug" class="debug-panel"></div>
 
   <script>
-    // ============================================================
-    // CONFIGURATION
-    // ============================================================
     var ALLOWED_PROJECT    = 'PLC';
     var ALLOWED_ISSUE_TYPE = 'Checklist';
-    var WAIVER_ACTION_ID   = '2';  // string — REST API expects string
+    var WAIVER_ACTION_ID   = 2;
 
-    // ============================================================
-    // Debug logger
-    // ============================================================
-    var debugEl = document.getElementById('debug');
-    function log(label, data) {
-      var msg = '[WaiverReq] ' + label;
-      if (data !== undefined) {
-        msg += ': ' + (typeof data === 'object' ? JSON.stringify(data, null, 2) : data);
-      }
-      console.log(msg);
-      debugEl.textContent += msg + '\n';
+    function getAtlToken() {
+      var match = document.cookie.match(/atlassian\.xsrf\.token=([^;]+)/);
+      return match ? match[1] : null;
     }
 
-    // ============================================================
-    // Wait for bridge
-    // ============================================================
-    function waitForBridge(callback) {
-      var attempts = 0;
-      var maxAttempts = 50;
-      var interval = setInterval(function () {
-        attempts++;
-        var issueKey = null;
-        if (window.AdaptavistBridgeContext && window.AdaptavistBridgeContext.context) {
-          issueKey = window.AdaptavistBridgeContext.context.issueKey;
-        }
-        if (attempts === 1 || attempts % 5 === 0 || issueKey) {
-          log('Poll #' + attempts, { issueKey: issueKey || 'N/A' });
-        }
-        if (issueKey) {
-          clearInterval(interval);
-          callback(issueKey);
-        } else if (attempts >= maxAttempts) {
-          clearInterval(interval);
-          log('FAILED — Bridge never ready');
-          document.getElementById('container').innerHTML =
-            '<span class="loading">Unable to load issue context.</span>';
+    function waitForBridge(cb) {
+      var n = 0;
+      var iv = setInterval(function () {
+        n++;
+        var k = null;
+        if (window.AdaptavistBridgeContext && AdaptavistBridgeContext.context)
+          k = AdaptavistBridgeContext.context.issueKey;
+        if (k) { clearInterval(iv); cb(k); }
+        else if (n >= 50) {
+          clearInterval(iv);
+          document.getElementById('container').innerHTML = '<span class="loading">Bridge timeout.</span>';
         }
       }, 200);
     }
 
-    // ============================================================
-    // Main
-    // ============================================================
     waitForBridge(function (issueKey) {
       var container = document.getElementById('container');
-      log('Bridge ready', issueKey);
 
-      // Step 1: Fetch issue data
       AdaptavistBridge.request({
         url: '/rest/api/2/issue/' + issueKey + '?fields=project,issuetype,status',
         type: 'GET'
@@ -151,231 +64,37 @@
 
         var projectKey   = issue.fields.project.key;
         var issueType    = issue.fields.issuetype.name;
-        var statusName   = issue.fields.status.name;
         var fullIssueKey = issue.key;
-
-        log('Parsed', { fullIssueKey: fullIssueKey, projectKey: projectKey, issueType: issueType, status: statusName });
+        var baseUrl      = issue.self.split('/rest/')[0];
 
         if (projectKey !== ALLOWED_PROJECT || issueType !== ALLOWED_ISSUE_TYPE) {
-          log('Condition NOT met — hiding');
           container.classList.add('hidden');
           return;
         }
 
-        log('Condition MET');
+        var atlToken = getAtlToken();
 
-        // Step 2: Check what the transition requires (does it have a screen with fields?)
-        return AdaptavistBridge.request({
-          url: '/rest/api/2/issue/' + fullIssueKey + '/transitions?expand=transitions.fields',
-          type: 'GET'
-        }).then(function (transResponse) {
-          var transData = typeof transResponse === 'string' ? JSON.parse(transResponse) : transResponse;
-          var transitions = transData.transitions || [];
+        var url = baseUrl + '/secure/WorkflowUIDispatcher.jspa'
+          + '?key=' + encodeURIComponent(fullIssueKey)
+          + '&action=' + WAIVER_ACTION_ID;
 
-          log('Available transitions', transitions.map(function (t) {
-            return { id: t.id, name: t.name, hasFields: t.fields ? Object.keys(t.fields).length > 0 : false };
-          }));
+        if (atlToken) {
+          url += '&atl_token=' + encodeURIComponent(atlToken);
+        }
 
-          // Find the waiver transition
-          var waiverTransition = null;
-          for (var i = 0; i < transitions.length; i++) {
-            if (transitions[i].id === WAIVER_ACTION_ID) {
-              waiverTransition = transitions[i];
-              break;
-            }
-          }
+        url += '&returnUrl=&inline=true&decorator=dialog&_=' + Date.now();
 
-          if (!waiverTransition) {
-            log('Transition ID ' + WAIVER_ACTION_ID + ' NOT available from current status "' + statusName + '"');
-            container.innerHTML =
-              '<span class="loading">Waiver Request not available from status "' + statusName + '"</span>';
-            return;
-          }
-
-          log('Found transition', { id: waiverTransition.id, name: waiverTransition.name });
-
-          // Check if the transition has required fields (screen)
-          var requiredFields = {};
-          var hasRequiredFields = false;
-          if (waiverTransition.fields) {
-            Object.keys(waiverTransition.fields).forEach(function (fieldId) {
-              var field = waiverTransition.fields[fieldId];
-              if (field.required) {
-                hasRequiredFields = true;
-                requiredFields[fieldId] = field;
-              }
-            });
-          }
-
-          log('Required fields', hasRequiredFields ? requiredFields : 'None — direct transition');
-
-          // Render
-          renderButton(fullIssueKey, waiverTransition, requiredFields, hasRequiredFields, statusName);
-        });
+        container.innerHTML =
+          '<div class="status-row">' +
+          '  <span class="status-label">Issue:</span>' +
+          '  <span>' + fullIssueKey + '</span>' +
+          '</div>' +
+          '<a href="' + url + '" target="_top" class="waiver-btn">Waiver Request</a>';
 
       }).catch(function (err) {
-        log('FAILED', err);
         container.innerHTML = '<span class="loading">Error: ' + (err.message || err) + '</span>';
       });
     });
-
-    // ============================================================
-    // Render button + optional fields form
-    // ============================================================
-    function renderButton(fullIssueKey, transition, requiredFields, hasRequiredFields, statusName) {
-      var container = document.getElementById('container');
-
-      var html =
-        '<div class="status-row">' +
-        '  <span class="status-label">Issue:</span>' +
-        '  <span>' + fullIssueKey + ' — ' + statusName + '</span>' +
-        '</div>';
-
-      // If transition has required fields, show a mini form
-      if (hasRequiredFields) {
-        html += '<div class="fields-form" id="fields-form">';
-        Object.keys(requiredFields).forEach(function (fieldId) {
-          var field = requiredFields[fieldId];
-          var fieldName = field.name || fieldId;
-
-          html += '<label>' + fieldName + ' (required)</label>';
-
-          if (field.allowedValues && field.allowedValues.length > 0) {
-            // Dropdown for fields with allowed values (like Resolution)
-            html += '<select id="field-' + fieldId + '" data-field-id="' + fieldId + '" class="transition-field">';
-            field.allowedValues.forEach(function (val) {
-              html += '<option value="' + (val.id || val.name) + '">' + (val.name || val.value || val.id) + '</option>';
-            });
-            html += '</select>';
-          } else {
-            // Text input for free text fields
-            html += '<input type="text" id="field-' + fieldId + '" data-field-id="' + fieldId + '" class="transition-field" />';
-          }
-        });
-        html += '</div>';
-      }
-
-      // Optional comment
-      html += '<div class="fields-form">';
-      html += '  <label>Comment (optional)</label>';
-      html += '  <textarea id="transition-comment" placeholder="Add a comment..."></textarea>';
-      html += '</div>';
-
-      html += '<button class="waiver-btn" id="waiver-btn" style="margin-top:10px">' + transition.name + '</button>';
-      html += '<div id="result-msg"></div>';
-
-      container.innerHTML = html;
-
-      // Attach click handler
-      document.getElementById('waiver-btn').addEventListener('click', function () {
-        executeTransition(fullIssueKey, transition, requiredFields, hasRequiredFields);
-      });
-    }
-
-    // ============================================================
-    // Execute transition via REST API
-    // No atl_token needed — AdaptavistBridge handles auth
-    // ============================================================
-    function executeTransition(fullIssueKey, transition, requiredFields, hasRequiredFields) {
-      var btn = document.getElementById('waiver-btn');
-      var msgEl = document.getElementById('result-msg');
-
-      btn.textContent = 'Processing...';
-      btn.classList.add('processing');
-      btn.disabled = true;
-      msgEl.innerHTML = '';
-
-      // Build request body
-      var body = {
-        transition: {
-          id: transition.id
-        }
-      };
-
-      // Collect field values if any
-      if (hasRequiredFields) {
-        body.fields = {};
-        var fieldInputs = document.querySelectorAll('.transition-field');
-        for (var i = 0; i < fieldInputs.length; i++) {
-          var input = fieldInputs[i];
-          var fieldId = input.getAttribute('data-field-id');
-          var value = input.value;
-
-          if (value) {
-            // For fields with allowed values (Resolution etc.), wrap in object with id
-            if (input.tagName === 'SELECT') {
-              body.fields[fieldId] = { id: value };
-            } else {
-              body.fields[fieldId] = value;
-            }
-          }
-        }
-      }
-
-      // Add comment if present
-      var commentEl = document.getElementById('transition-comment');
-      var comment = commentEl ? commentEl.value.trim() : '';
-      if (comment) {
-        body.update = {
-          comment: [{
-            add: {
-              body: comment
-            }
-          }]
-        };
-      }
-
-      log('Executing transition', body);
-
-      AdaptavistBridge.request({
-        url: '/rest/api/2/issue/' + fullIssueKey + '/transitions',
-        type: 'POST',
-        contentType: 'application/json',
-        data: JSON.stringify(body)
-      }).then(function (response) {
-        log('Transition SUCCESS', response);
-
-        btn.textContent = '✓ Done';
-        btn.classList.remove('processing');
-        btn.classList.add('success');
-        msgEl.innerHTML = '<div class="msg success">Transition completed. Reloading...</div>';
-
-        // Reload the issue page after a short delay
-        setTimeout(function () {
-          if (window.AP && window.AP.navigator) {
-            AP.navigator.reload();
-          } else {
-            window.top.location.reload();
-          }
-        }, 1500);
-
-      }).catch(function (err) {
-        log('Transition FAILED', err);
-
-        var errMsg = '';
-        try {
-          var errObj = typeof err === 'string' ? JSON.parse(err) : err;
-          if (errObj.errorMessages) {
-            errMsg = errObj.errorMessages.join(', ');
-          } else if (errObj.errors) {
-            errMsg = JSON.stringify(errObj.errors);
-          } else {
-            errMsg = err.message || JSON.stringify(err);
-          }
-        } catch (e) {
-          errMsg = err.message || String(err);
-        }
-
-        btn.textContent = 'Waiver Request';
-        btn.classList.remove('processing');
-        btn.classList.add('error');
-        btn.disabled = false;
-        msgEl.innerHTML = '<div class="msg error">Failed: ' + errMsg + '</div>';
-
-        // Reset button style after a moment
-        setTimeout(function () { btn.classList.remove('error'); }, 3000);
-      });
-    }
   </script>
 </body>
 </html>
