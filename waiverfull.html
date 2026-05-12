@@ -8,44 +8,125 @@
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+      font-size: 14px;
+      color: #172B4D;
       padding: 10px 12px;
     }
-    .status-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
-    .status-label { font-size: 11px; color: #6B778C; font-weight: 600; text-transform: uppercase; }
+    .row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px; }
+    .label { font-size: 11px; color: #6B778C; font-weight: 600; text-transform: uppercase; min-width: 70px; }
+
     .waiver-btn {
-      display: inline-flex; align-items: center; gap: 6px;
-      background-color: #0052CC; color: #FFFFFF; border: none; border-radius: 3px;
-      padding: 8px 16px; font-size: 14px; font-weight: 500; cursor: pointer;
-      width: 100%; justify-content: center; text-decoration: none;
-      transition: background-color 0.2s ease;
+      margin-top: 10px;
+      background-color: #0052CC; color: #fff; border: none; border-radius: 3px;
+      padding: 10px 16px; font-size: 14px; font-weight: 500; cursor: pointer;
+      width: 100%;
     }
     .waiver-btn:hover { background-color: #0065FF; }
-    .waiver-btn:active { background-color: #0747A6; }
-    .hidden { display: none; }
-    .loading { font-size: 12px; color: #6B778C; }
+    .waiver-btn:disabled { background-color: #A5ADBA; cursor: not-allowed; }
+    .btn-secondary {
+      background: transparent; color: #42526E; border: none; border-radius: 3px;
+      padding: 8px 12px; font-size: 14px; cursor: pointer;
+    }
+    .btn-secondary:hover { background: #EBECF0; }
+
+    .status { padding: 6px 0; color: #6B778C; font-size: 12px; }
+
+    .overlay {
+      position: fixed; inset: 0;
+      background: rgba(9, 30, 66, 0.54);
+      z-index: 9999;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .modal {
+      background: #fff; border-radius: 3px;
+      box-shadow: 0 10px 24px rgba(9, 30, 66, 0.25);
+      width: 580px; max-width: 92vw; max-height: 90vh;
+      display: flex; flex-direction: column;
+    }
+    .modal-head { padding: 20px 24px 8px; font-size: 20px; font-weight: 500; }
+    .modal-body { padding: 8px 24px 16px; overflow-y: auto; flex: 1; }
+    .modal-foot {
+      padding: 16px 24px; display: flex; justify-content: flex-end; gap: 8px;
+      border-top: 1px solid #DFE1E6;
+    }
+
+    .field { margin-bottom: 14px; }
+    .field > label.field-label {
+      display: block; font-size: 12px; font-weight: 600;
+      color: #6B778C; margin-bottom: 4px;
+    }
+    .field textarea {
+      width: 100%; padding: 8px 10px; font: inherit; font-size: 14px;
+      border: 2px solid #DFE1E6; border-radius: 3px; background: #FAFBFC;
+      min-height: 80px; resize: vertical;
+    }
+    .field textarea:focus { outline: none; border-color: #4C9AFF; background: #fff; }
+    .field input[type=checkbox] { margin-right: 6px; }
+    .file-list { margin-top: 6px; padding-left: 18px; font-size: 12px; color: #42526E; }
+
+    .error-banner {
+      padding: 10px; margin-top: 10px;
+      background: #FFEBE6; color: #DE350B;
+      border-radius: 3px; font-size: 12px;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .warn-banner {
+      padding: 8px 10px; margin-top: 8px;
+      background: #FFFAE6; color: #974F0C;
+      border-radius: 3px; font-size: 12px;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .progress {
+      padding: 6px 10px; margin-top: 6px;
+      background: #DEEBFF; color: #0747A6;
+      border-radius: 3px; font-size: 12px;
+    }
   </style>
 </head>
 <body>
-  <div id="container"><span class="loading">Loading...</span></div>
+  <div id="container"><span class="status">Loading…</span></div>
+  <div id="modal-root"></div>
+
   <script>
     var ALLOWED_PROJECT    = 'PLC';
     var ALLOWED_ISSUE_TYPE = 'Checklist';
     var WAIVER_ACTION_ID   = 2;
 
-    // Pull atl_token from this iframe's own URL query string.
-    // e.g. fragment URL configured as:
-    //   https://yourhost/waiver.html?atl_token=ABCD-..._lin
-    // Falls back to document.cookie if not present in URL.
-    function getAtlToken() {
-      try {
-        var qs = window.location.search || '';
-        var m = qs.match(/[?&]atl_token=([^&]+)/);
-        if (m && m[1]) return decodeURIComponent(m[1]);
-      } catch (e) {}
-      var c = document.cookie.match(/atlassian\.xsrf\.token=([^;]+)/);
-      return c ? c[1] : null;
+    var FIELD_IDS = {
+      waiverRequest:   'customfield_10619',
+      responseDetails: 'customfield_10382',
+      justification:   'customfield_10615'
+    };
+
+    // If true: a failed attachment upload aborts the whole submit.
+    // If false: attachment failure is shown as a warning, but the rest (fields + comment + transition) still runs.
+    var ABORT_ON_ATTACHMENT_FAIL = false;
+
+    /* ===== ADF ===== */
+    function adf(text) {
+      return {
+        type: 'doc',
+        version: 1,
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: text || '' }] }]
+      };
+    }
+    function adfToText(doc) {
+      if (!doc) return '';
+      if (typeof doc === 'string') return doc;
+      if (!doc.content) return '';
+      var out = [];
+      function walk(node) {
+        if (!node) return;
+        if (node.type === 'text' && node.text) out.push(node.text);
+        if (node.type === 'hardBreak') out.push('\n');
+        if (Array.isArray(node.content)) node.content.forEach(walk);
+        if (node.type === 'paragraph') out.push('\n');
+      }
+      walk(doc);
+      return out.join('').replace(/^\n+|\n+$/g, '');
     }
 
+    /* ===== Bridge wait ===== */
     function waitForBridge(cb) {
       var n = 0;
       var iv = setInterval(function () {
@@ -56,46 +137,300 @@
         if (k) { clearInterval(iv); cb(k); }
         else if (n >= 50) {
           clearInterval(iv);
-          document.getElementById('container').innerHTML = '<span class="loading">Bridge timeout.</span>';
+          document.getElementById('container').innerHTML = '<div class="status">Bridge timeout.</div>';
         }
       }, 200);
     }
 
+    /* ===== REST via bridge ===== */
+    function getIssueWithFields(issueKey) {
+      var fields = ['project','issuetype','status','description',
+                    FIELD_IDS.waiverRequest, FIELD_IDS.responseDetails, FIELD_IDS.justification].join(',');
+      return AdaptavistBridge.request({
+        url: '/rest/api/3/issue/' + issueKey + '?fields=' + fields,
+        type: 'GET'
+      }).then(function (r) { return typeof r === 'string' ? JSON.parse(r) : r; });
+    }
+    function putFields(issueKey, body) {
+      return AdaptavistBridge.request({
+        url: '/rest/api/3/issue/' + issueKey,
+        type: 'PUT',
+        contentType: 'application/json',
+        data: JSON.stringify(body)
+      });
+    }
+    function postComment(issueKey, text) {
+      return AdaptavistBridge.request({
+        url: '/rest/api/3/issue/' + issueKey + '/comment',
+        type: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({ body: adf(text) })
+      });
+    }
+    function postTransition(issueKey, transitionId) {
+      return AdaptavistBridge.request({
+        url: '/rest/api/3/issue/' + issueKey + '/transitions',
+        type: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({ transition: { id: String(transitionId) } })
+      });
+    }
+
+    /* ===== Attachment upload — best-effort =====
+       Strategy:
+       1. Try AdaptavistBridge.request with FormData (some bridge versions support it)
+       2. If that fails, fall back to a direct fetch with credentials:'include' (uses the user's atlassian.net session cookie)
+       Both have known restrictions in iframe contexts; we expose the error if it fails.
+    */
+    function uploadAttachmentsViaBridge(issueKey, files) {
+      var form = new FormData();
+      files.forEach(function (f) { form.append('file', f, f.name); });
+      return AdaptavistBridge.request({
+        url: '/rest/api/3/issue/' + issueKey + '/attachments',
+        type: 'POST',
+        headers: { 'X-Atlassian-Token': 'no-check' },
+        data: form,
+        processData: false,
+        contentType: false
+      });
+    }
+
+    function uploadAttachmentsViaFetch(issueKey, files) {
+      // Direct fetch to the tenant. The atlassian.net cookie travels because credentials:'include'.
+      // The tenant URL is derived from AP.context if available, or from the issue self URL.
+      var baseUrl = window.AdaptavistBridgeContext &&
+                    AdaptavistBridgeContext.context &&
+                    AdaptavistBridgeContext.context.baseUrl;
+      if (!baseUrl) {
+        return Promise.reject(new Error('No base URL available for direct fetch'));
+      }
+      var form = new FormData();
+      files.forEach(function (f) { form.append('file', f, f.name); });
+      return fetch(baseUrl + '/rest/api/3/issue/' + issueKey + '/attachments', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'X-Atlassian-Token': 'no-check', 'Accept': 'application/json' },
+        body: form
+      }).then(function (res) {
+        if (!res.ok) {
+          return res.text().then(function (t) { throw new Error('Fetch upload ' + res.status + ': ' + t); });
+        }
+        return res.json();
+      });
+    }
+
+    function uploadAttachments(issueKey, files) {
+      if (!files || files.length === 0) return Promise.resolve({ skipped: true });
+      return uploadAttachmentsViaBridge(issueKey, files)
+        .then(function () { return { method: 'bridge' }; })
+        .catch(function (bridgeErr) {
+          return uploadAttachmentsViaFetch(issueKey, files)
+            .then(function () { return { method: 'fetch' }; })
+            .catch(function (fetchErr) {
+              throw new Error(
+                'Attachment upload failed via both methods.\n' +
+                'Bridge: ' + ((bridgeErr && (bridgeErr.message || bridgeErr.responseText)) || bridgeErr) + '\n' +
+                'Fetch: '  + ((fetchErr  && (fetchErr.message  || fetchErr.responseText))  || fetchErr)
+              );
+            });
+        });
+    }
+
+    /* ===== Modal ===== */
+    function openModal(issueKey, currentFields) {
+      var modalRoot = document.getElementById('modal-root');
+
+      var initDescription = adfToText(currentFields.description);
+      var initResponse    = adfToText(currentFields[FIELD_IDS.responseDetails]);
+      var initJustif      = adfToText(currentFields[FIELD_IDS.justification]);
+      var wr              = currentFields[FIELD_IDS.waiverRequest];
+      var initWaiverYes   = false;
+      if (Array.isArray(wr) && wr.length > 0) {
+        initWaiverYes = wr.some(function (o) { return o && (o.value === 'Yes' || o.value === 'yes'); });
+      } else if (wr && typeof wr === 'object' && wr.value) {
+        initWaiverYes = (wr.value === 'Yes' || wr.value === 'yes');
+      }
+
+      var pickedFiles = [];
+
+      modalRoot.innerHTML =
+        '<div class="overlay" id="overlay">' +
+        '  <div class="modal" onclick="event.stopPropagation()">' +
+        '    <div class="modal-head">Waiver Request</div>' +
+        '    <div class="modal-body">' +
+        '      <div class="field">' +
+        '        <label class="field-label">Waiver Request</label>' +
+        '        <label><input type="checkbox" id="f-waiver" ' + (initWaiverYes ? 'checked' : '') + ' /> Yes</label>' +
+        '      </div>' +
+        '      <div class="field">' +
+        '        <label class="field-label">Response Details</label>' +
+        '        <textarea id="f-response"></textarea>' +
+        '      </div>' +
+        '      <div class="field">' +
+        '        <label class="field-label">Justification</label>' +
+        '        <textarea id="f-justification"></textarea>' +
+        '      </div>' +
+        '      <div class="field">' +
+        '        <label class="field-label">Description</label>' +
+        '        <textarea id="f-description"></textarea>' +
+        '      </div>' +
+        '      <div class="field">' +
+        '        <label class="field-label">Attachments</label>' +
+        '        <input type="file" id="f-files" multiple />' +
+        '        <ul class="file-list" id="file-list"></ul>' +
+        '      </div>' +
+        '      <div class="field">' +
+        '        <label class="field-label">Comment</label>' +
+        '        <textarea id="f-comment"></textarea>' +
+        '      </div>' +
+        '      <div id="progress-box" class="progress" style="display:none"></div>' +
+        '      <div id="warn-box" class="warn-banner" style="display:none"></div>' +
+        '      <div id="error-box" class="error-banner" style="display:none"></div>' +
+        '    </div>' +
+        '    <div class="modal-foot">' +
+        '      <button class="btn-secondary" id="btn-cancel">Cancel</button>' +
+        '      <button class="waiver-btn" style="width:auto;margin-top:0" id="btn-submit">Submit</button>' +
+        '    </div>' +
+        '  </div>' +
+        '</div>';
+
+      document.getElementById('f-response').value      = initResponse;
+      document.getElementById('f-justification').value = initJustif;
+      document.getElementById('f-description').value   = initDescription;
+
+      var fileInput = document.getElementById('f-files');
+      var fileList  = document.getElementById('file-list');
+      fileInput.onchange = function () {
+        pickedFiles = Array.from(fileInput.files || []);
+        fileList.innerHTML = pickedFiles.map(function (f) {
+          return '<li>' + f.name + ' (' + Math.round(f.size/1024) + ' KB)</li>';
+        }).join('');
+      };
+
+      function closeModal() { modalRoot.innerHTML = ''; }
+      document.getElementById('btn-cancel').onclick = closeModal;
+      document.getElementById('overlay').onclick = function (e) {
+        if (e.target.id === 'overlay') closeModal();
+      };
+
+      document.getElementById('btn-submit').onclick = function () {
+        var btn = this;
+        var cancelBtn = document.getElementById('btn-cancel');
+        var errBox = document.getElementById('error-box');
+        var warnBox = document.getElementById('warn-box');
+        var progBox = document.getElementById('progress-box');
+        errBox.style.display = 'none';
+        warnBox.style.display = 'none';
+        progBox.style.display = 'block';
+        progBox.textContent = 'Starting…';
+
+        btn.disabled = true;
+        cancelBtn.disabled = true;
+        btn.textContent = 'Submitting…';
+
+        var waiverYes       = document.getElementById('f-waiver').checked;
+        var responseDetails = document.getElementById('f-response').value;
+        var justification   = document.getElementById('f-justification').value;
+        var description     = document.getElementById('f-description').value;
+        var comment         = document.getElementById('f-comment').value;
+
+        var updateBody = { fields: {} };
+        if (responseDetails) updateBody.fields[FIELD_IDS.responseDetails] = adf(responseDetails);
+        if (justification)   updateBody.fields[FIELD_IDS.justification]   = adf(justification);
+        if (description)     updateBody.fields.description                = adf(description);
+        updateBody.fields[FIELD_IDS.waiverRequest] = waiverYes ? [{ value: 'Yes' }] : [];
+
+        var attachmentWarning = null;
+
+        // 1. Attachments
+        progBox.textContent = pickedFiles.length
+          ? 'Uploading ' + pickedFiles.length + ' attachment(s)…'
+          : 'No attachments, skipping…';
+
+        var chain = uploadAttachments(issueKey, pickedFiles).catch(function (e) {
+          if (ABORT_ON_ATTACHMENT_FAIL) throw e;
+          attachmentWarning = 'Attachments failed but continuing with rest:\n' + (e.message || String(e));
+          return { failed: true };
+        });
+
+        // 2. Fields
+        chain = chain.then(function () {
+          progBox.textContent = 'Updating fields…';
+          if (Object.keys(updateBody.fields).length > 0) {
+            return putFields(issueKey, updateBody);
+          }
+        });
+
+        // 3. Comment
+        chain = chain.then(function () {
+          if (comment && comment.trim()) {
+            progBox.textContent = 'Adding comment…';
+            return postComment(issueKey, comment);
+          }
+        });
+
+        // 4. Transition
+        chain = chain.then(function () {
+          progBox.textContent = 'Running transition…';
+          return postTransition(issueKey, WAIVER_ACTION_ID);
+        });
+
+        chain.then(function () {
+          progBox.textContent = 'Done.';
+          if (attachmentWarning) {
+            warnBox.textContent = attachmentWarning;
+            warnBox.style.display = 'block';
+            btn.disabled = false;
+            cancelBtn.disabled = false;
+            btn.textContent = 'Close';
+            btn.onclick = function () {
+              closeModal();
+              try { window.top.location.reload(); } catch (e) {}
+            };
+          } else {
+            setTimeout(function () {
+              closeModal();
+              try { window.top.location.reload(); } catch (e) {}
+            }, 800);
+          }
+        }).catch(function (err) {
+          progBox.style.display = 'none';
+          errBox.textContent = 'Submit failed: ' + ((err && (err.responseText || err.message)) || JSON.stringify(err));
+          errBox.style.display = 'block';
+          btn.disabled = false;
+          cancelBtn.disabled = false;
+          btn.textContent = 'Submit';
+        });
+      };
+    }
+
+    /* ===== Boot ===== */
     waitForBridge(function (issueKey) {
       var container = document.getElementById('container');
-      AdaptavistBridge.request({
-        url: '/rest/api/2/issue/' + issueKey + '?fields=project,issuetype,status',
-        type: 'GET'
-      }).then(function (response) {
-        var issue = typeof response === 'string' ? JSON.parse(response) : response;
+
+      getIssueWithFields(issueKey).then(function (issue) {
         var projectKey   = issue.fields.project.key;
         var issueType    = issue.fields.issuetype.name;
         var fullIssueKey = issue.key;
-        var baseUrl      = issue.self.split('/rest/')[0];
 
         if (projectKey !== ALLOWED_PROJECT || issueType !== ALLOWED_ISSUE_TYPE) {
-          container.classList.add('hidden');
+          container.innerHTML = '';
           return;
         }
 
-        var atlToken = getAtlToken();
-
-        var url = baseUrl + '/secure/WorkflowUIDispatcher.jspa'
-          + '?key=' + encodeURIComponent(fullIssueKey)
-          + '&action=' + WAIVER_ACTION_ID;
-        if (atlToken) {
-          url += '&atl_token=' + encodeURIComponent(atlToken);
-        }
-        url += '&returnUrl=&inline=true&decorator=dialog&_=' + Date.now();
-
         container.innerHTML =
-          '<div class="status-row">' +
-          '  <span class="status-label">Issue:</span>' +
-          '  <span>' + fullIssueKey + '</span>' +
-          '</div>' +
-          '<a href="' + url + '" target="_top" class="waiver-btn">Waiver Request</a>';
+          '<div class="row"><span class="label">Issue:</span><span>' + fullIssueKey + '</span></div>' +
+          '<div class="row"><span class="label">Project:</span><span>' + projectKey + '</span></div>' +
+          '<div class="row"><span class="label">Type:</span><span>' + issueType + '</span></div>' +
+          '<div class="row"><span class="label">Status:</span><span>' + issue.fields.status.name + '</span></div>' +
+          '<button class="waiver-btn" id="open-btn">Waiver Request</button>';
+
+        document.getElementById('open-btn').onclick = function () {
+          openModal(fullIssueKey, issue.fields);
+        };
       }).catch(function (err) {
-        container.innerHTML = '<span class="loading">Error: ' + (err.message || err) + '</span>';
+        container.innerHTML = '<div class="status">Error loading issue: ' +
+          ((err && (err.message || err.responseText)) || 'unknown') + '</div>';
       });
     });
   </script>
