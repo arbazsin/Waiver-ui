@@ -419,10 +419,7 @@
         }
 
         container.innerHTML =
-          '<div class="row"><span class="label">Issue:</span><span>' + fullIssueKey + '</span></div>' +
-          '<div class="row"><span class="label">Project:</span><span>' + projectKey + '</span></div>' +
-          '<div class="row"><span class="label">Type:</span><span>' + issueType + '</span></div>' +
-          '<div class="row"><span class="label">Status:</span><span>' + issue.fields.status.name + '</span></div>' +
+         
           '<button class="waiver-btn" id="open-btn">Waiver Request</button>';
 
         document.getElementById('open-btn').onclick = function () {
